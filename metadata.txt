@@ -10,7 +10,8 @@ about=This plugin allows automated watershed delineation and drainage network ex
 tracker=https://github.com/victoroalvites-cpu/hidrogis_tools/issues
 repository=https://github.com/victoroalvites-cpu/hidrogis_tools
 license=GNU GPL v2 or later
-changelog=1.0.3 - Se corrige descarga de DEM usando QgsNetworkAccessManager y validación de dominio seguro.category=Vector
+changelog=1.0.3 - Se corrige descarga de DEM usando QgsNetworkAccessManager y validación de dominio seguro.
+category=Vector
 tags=hidrologia, cuencas, drenaje, hec-hms, delimitacion, morfometria
 icon=icon.png
 experimental=False
