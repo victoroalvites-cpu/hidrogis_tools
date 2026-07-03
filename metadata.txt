@@ -2,7 +2,7 @@
 name=HidroGIS Watershed Tools
 qgisMinimumVersion=3.40
 description=Hydrological tool for watershed delineation, drainage network extraction, morphometric parameters, and time of concentration. / Herramienta hidrologica para delimitar cuencas, extraer redes de drenaje y calcular parametros morfometricos.
-version=1.0.2
+version=1.0.3
 author=Víctor Olivos
 email=Victoroalvites@gmail.com
 homepage=https://github.com/victoroalvites-cpu/hidrogis_tools
@@ -10,8 +10,7 @@ about=This plugin allows automated watershed delineation and drainage network ex
 tracker=https://github.com/victoroalvites-cpu/hidrogis_tools/issues
 repository=https://github.com/victoroalvites-cpu/hidrogis_tools
 license=GNU GPL v2 or later
-changelog=1.0.2 - Metadata updated for QGIS plugin repository validation.
-category=Vector
+changelog=1.0.3 - Se corrige descarga de DEM usando QgsNetworkAccessManager y validación de dominio seguro.category=Vector
 tags=hidrologia, cuencas, drenaje, hec-hms, delimitacion, morfometria
 icon=icon.png
 experimental=False
