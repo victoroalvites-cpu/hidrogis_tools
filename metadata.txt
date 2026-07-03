@@ -1,6 +1,6 @@
 [general]
 name=HidroGIS Watershed Tools
-qgisMinimumVersion=3.28
+qgisMinimumVersion=3.40
 description=Hydrological tool for watershed delineation, drainage network extraction, morphometric parameters, and time of concentration. / Herramienta hidrologica para delimitar cuencas, extraer redes de drenaje y calcular parametros morfometricos.
 version=1.0.1
 author=Víctor Olivos
