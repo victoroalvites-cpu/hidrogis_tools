@@ -10,7 +10,6 @@ tracker=https://github.com/victoroalvites-cpu/hidrogis_tools/issues
 repository=https://github.com/victoroalvites-cpu/hidrogis_tools
 category=Vector
 tags=hidrologia, cuencas, drenaje, hec-hms, delimitacion, morfometria
-homepage=
 icon=icon.png
 experimental=False
 deprecated=False
