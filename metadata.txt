@@ -1,11 +1,11 @@
 [general]
 name=HidroGIS Watershed Tools
 qgisMinimumVersion=3.28
-description=Herramienta hidrologica para delimitar cuencas, extraer redes de drenaje y calcular parametros morfometricos y tiempos de concentracion.
+description=Hydrological tool for watershed delineation, drainage network extraction, morphometric parameters, and time of concentration. / Herramienta hidrologica para delimitar cuencas, extraer redes de drenaje y calcular parametros morfometricos.
 version=1.0.0
 author=Víctor Olivos
 email=Victoroalvites@gmail.com
-about=Este complemento permite delimitar cuencas hidrograficas y extraer redes de drenaje trazando el recorrido principal mediante el metodo topografico D8. Ademas, realiza el calculo automatizado de parametros geomorfologicos, curvas hipsometricas y tiempos de concentracion (filtrados por escala espacial), tanto para cuencas unicas como para multiples subunidades importadas, exportando reportes detallados en Excel y CSV listos para nutrir modelos HEC-HMS.
+about=This plugin allows automated watershed delineation and drainage network extraction using the D8 topographic method. It calculates comprehensive morphometric parameters, hypsometric curves, and time of concentration (filtered by spatial scale rules) for single basins and external HEC-HMS subbasins, exporting clean Excel/CSV reports. / Este complemento permite delimitar cuencas y extraer redes de drenaje mediante D8. Ademas, calcula parametros geomorfologicos, curvas hipsometricas y tiempos de concentracion filtrados por escala espacial para cuencas y subunidades HEC-HMS, exportando reportes en Excel y CSV.
 tracker=https://github.com/victoroalvites-cpu/hidrogis_tools/issues
 repository=https://github.com/victoroalvites-cpu/hidrogis_tools
 category=Vector
