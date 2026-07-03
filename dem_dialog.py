@@ -1,8 +1,11 @@
 from pathlib import Path
-from urllib.parse import urlencode
-from urllib.request import urlretrieve
+from urllib.parse import urlencode, urlparse
 
-from qgis.PyQt.QtCore import Qt
+from qgis.PyQt.QtCore import Qt, QEventLoop, QUrl
+from qgis.PyQt.QtNetwork import QNetworkRequest
+from qgis.core import QgsNetworkAccessManager
+
+
 from qgis.PyQt.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -66,6 +69,37 @@ class DemPreprocessDialog(QWidget):
         "Copernicus 30 m (COP30)": "COP30",
         "Copernicus 90 m (COP90)": "COP90",
     }
+
+    def _download_file(self, url, output_path):
+        parsed = urlparse(url)
+
+        if parsed.scheme != "https":
+            raise ValueError("Solo se permiten descargas mediante HTTPS.")
+
+        if parsed.netloc.lower() != "portal.opentopography.org":
+            raise ValueError("Dominio de descarga no permitido.")
+
+        request = QNetworkRequest(QUrl(url))
+        manager = QgsNetworkAccessManager.instance()
+        reply = manager.get(request)
+
+        loop = QEventLoop()
+        reply.finished.connect(loop.quit)
+        loop.exec_()
+
+        try:
+            if reply.error():
+                raise ValueError(f"Error descargando DEM: {reply.errorString()}")
+
+            data = reply.readAll()
+            if data.isEmpty():
+                raise ValueError("La descarga no devolvió contenido.")
+
+            with open(output_path, "wb") as file:
+                file.write(bytes(data))
+
+        finally:
+            reply.deleteLater()
 
     def __init__(self, iface, parent=None, show_close_button=True):
         super().__init__(parent)
@@ -303,7 +337,7 @@ class DemPreprocessDialog(QWidget):
         url = f"{self.OPENTOPO_URL}?{urlencode(params)}"
         self._log(f"Descargando DEM {dem_type} desde OpenTopography...")
         self._log(f"BBOX EPSG:4326: oeste={west:.6f}, sur={south:.6f}, este={east:.6f}, norte={north:.6f}")
-        urlretrieve(url, str(output_path))
+        self._download_file(url, output_path)
         if not output_path.exists() or output_path.stat().st_size == 0:
             raise ValueError("La descarga no genero un archivo valido.")
 
