@@ -3,7 +3,7 @@ import heapq
 import math
 import zipfile
 from pathlib import Path
-from xml.sax.saxutils import escape
+from html import escape
 
 from qgis.PyQt.QtCore import Qt, QUrl, QVariant
 from qgis.PyQt.QtGui import QColor, QDesktopServices, QFont, QIcon, QImage, QPainter, QPen, QPixmap
@@ -1794,8 +1794,8 @@ class MorphometryDialog(QWidget):
         try:
             if unit_geom.contains(outlet_geom) or unit_geom.touches(outlet_geom):
                 return QgsPointXY(outlet_point)
-        except Exception:
-            pass
+        except Exception as error:
+            self._log(f"No se pudo comprobar el punto de salida dentro de la unidad: {error}")
         boundary_point = self._nearest_boundary_point(unit_geom, outlet_point)
         if boundary_point is not None:
             return boundary_point
@@ -1803,8 +1803,8 @@ class MorphometryDialog(QWidget):
             nearest = unit_geom.nearestPoint(outlet_geom)
             if nearest is not None and not nearest.isEmpty():
                 return QgsPointXY(nearest.asPoint())
-        except Exception:
-            pass
+        except Exception as error:
+            self._log(f"No se pudo ajustar el punto de salida al borde de la unidad: {error}")
         return QgsPointXY(outlet_point)
 
     def _lowest_boundary_point(self, geom, dem_layer):
@@ -1909,7 +1909,8 @@ class MorphometryDialog(QWidget):
             try:
                 if unit_geom.contains(point_geom) or unit_geom.touches(point_geom):
                     start_indices.append(index)
-            except Exception:
+            except Exception as error:
+                self._log(f"No se pudo evaluar una celda inicial D8: {error}")
                 continue
         return start_indices
 
@@ -2154,8 +2155,8 @@ class MorphometryDialog(QWidget):
             result = geom.closestSegmentWithContext(QgsPointXY(point))
             if result and len(result) >= 2 and result[0] >= 0:
                 return QgsPointXY(result[1])
-        except Exception:
-            pass
+        except Exception as error:
+            self._log(f"No se pudo calcular el punto mas cercano del limite: {error}")
         return None
 
     def _longest_line_from_geometry(self, geom):
@@ -2201,14 +2202,14 @@ class MorphometryDialog(QWidget):
                 return [part for part in geom.asMultiPolyline() if len(part) >= 2]
             polyline = geom.asPolyline()
             return [polyline] if len(polyline) >= 2 else []
-        except Exception:
-            pass
+        except Exception as error:
+            self._log(f"No se pudo leer la linea como geometria simple o multiple: {error}")
         parts = []
         try:
             for part in geom.asGeometryCollection():
                 parts.extend(self._line_parts(part))
-        except Exception:
-            pass
+        except Exception as error:
+            self._log(f"No se pudo recorrer la coleccion de geometrias lineales: {error}")
         return parts
 
     def _node_key(self, point, tolerance):
@@ -2467,25 +2468,6 @@ class MorphometryDialog(QWidget):
             
         except Exception as e:
             self._log(f"Error en trazado cuesta abajo: {e}")
-            return path_geom
-
-    def _extend_path_to_outlet_if_inside(self, unit_geom, path_geom, outlet_point, max_distance):
-        if path_geom is None or path_geom.isEmpty() or outlet_point is None:
-            return path_geom
-        try:
-            points = path_geom.asPolyline()
-            if len(points) < 2:
-                return path_geom
-            end = QgsPointXY(points[-1])
-            distance = self._point_distance(end, outlet_point)
-            if distance <= 0.01 or distance > max_distance:
-                return path_geom
-            segment = QgsGeometry.fromPolylineXY([end, QgsPointXY(outlet_point)])
-            tolerance = max(0.01, min(max_distance * 0.05, 5.0))
-            if not self._segment_stays_inside(unit_geom, segment, tolerance):
-                return path_geom
-            return QgsGeometry.fromPolylineXY([QgsPointXY(point) for point in points] + [QgsPointXY(outlet_point)])
-        except Exception:
             return path_geom
 
     def _extend_path_to_outlet_if_inside(self, unit_geom, path_geom, outlet_point, max_distance):
@@ -2874,8 +2856,8 @@ class MorphometryDialog(QWidget):
             valid = geometry.makeValid()
             if valid is not None and not valid.isEmpty():
                 return valid
-        except Exception:
-            pass
+        except Exception as error:
+            self._log(f"No se pudo reparar la geometria: {error}")
         return geometry
 
     def _write_csv(self, output_path, rows):

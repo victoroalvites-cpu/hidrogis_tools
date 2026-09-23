@@ -2,7 +2,7 @@
 
 from datetime import datetime
 from pathlib import Path
-from xml.sax.saxutils import escape
+from html import escape
 import math
 import zipfile
 
@@ -218,7 +218,7 @@ def write_morphometry_docx(path, data_rows, result_fields=None, field_notes=None
     field_units = field_units or {}
     body = [
         _w_paragraph("Informe de parámetros geomorfológicos", "Title"),
-        _w_paragraph(f"Generado por HidroGIS Watershed Tools 1.1.3 — {datetime.now():%Y-%m-%d %H:%M}"),
+        _w_paragraph(f"Generado por HidroGIS Watershed Tools 1.1.4 — {datetime.now():%Y-%m-%d %H:%M}"),
         _w_paragraph("Resumen ejecutivo", "Heading1"),
         _w_paragraph(
             "El informe consolida la geometría, la forma, el relieve, el drenaje, el orden de Strahler "

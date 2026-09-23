@@ -1806,8 +1806,8 @@ class WatershedDelineationDialog(QWidget):
             valid = geometry.makeValid()
             if valid is not None and not valid.isEmpty():
                 return valid
-        except Exception:
-            pass
+        except Exception as error:
+            self._log(f"No se pudo reparar la geometria: {error}")
         return geometry
 
     def _sort_subunit_units(self, units):
