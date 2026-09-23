@@ -40,6 +40,7 @@ from qgis.core import (
 from qgis.gui import QgsMapLayerComboBox
 
 from .dem_dialog import TextFeedback
+from .hydrology_core import priority_flood_fill, strahler_order
 from .output_utils import add_or_replace_layer, discard_output_path, prepare_output_path
 
 
@@ -390,6 +391,16 @@ class WatershedDelineationDialog(QWidget):
             dem_layer = self._selected_dem()
             if not self._is_projected_crs(dem_layer.crs()):
                 raise ValueError("Usa un DEM en un CRS proyectado en metros antes de delimitar cuencas.")
+            if dem_layer.crs().mapUnits() != QgsUnitTypes.DistanceMeters:
+                raise ValueError(
+                    f"El DEM usa {dem_layer.crs().authid()} pero sus unidades no son metros. "
+                    "Reproyecta el DEM a un CRS metrico antes de delimitar."
+                )
+            self._log(
+                f"CRS del DEM: {dem_layer.crs().authid()}; "
+                f"CRS del proyecto: {QgsProject.instance().crs().authid()}. "
+                "El analisis usa el CRS del DEM."
+            )
 
             output_dir = Path(self.output_folder_edit.text()).expanduser()
             output_dir.mkdir(parents=True, exist_ok=True)
@@ -413,15 +424,31 @@ class WatershedDelineationDialog(QWidget):
                     feedback,
                 )
             else:
-                self._run_watershed(processing, self.last_outputs["analysis_dem"], dem_layer, output_dir, prefix, feedback)
-                self._extract_stream_network(
-                    processing,
-                    self.last_outputs["analysis_dem"],
-                    dem_layer,
-                    output_dir,
-                    prefix,
-                    feedback,
-                )
+                try:
+                    self._run_watershed(processing, self.last_outputs["analysis_dem"], dem_layer, output_dir, prefix, feedback)
+                    self._extract_stream_network(
+                        processing,
+                        self.last_outputs["analysis_dem"],
+                        dem_layer,
+                        output_dir,
+                        prefix,
+                        feedback,
+                    )
+                except Exception as exc:
+                    self._log(
+                        "Aviso: GRASS no pudo completar direccion, acumulacion o red. "
+                        f"Se intentara HidroGIS D8 interno. Detalle: {exc}"
+                    )
+                    self._run_hidrogis_d8_engine(
+                        processing,
+                        self.last_outputs["analysis_dem"],
+                        dem_layer,
+                        output_dir,
+                        prefix,
+                        feedback,
+                    )
+                    engine = "hidrogis_d8"
+                    self.last_outputs["hydrology_engine"] = engine
 
             if not only_streams:
                 if engine == "hidrogis_d8":
@@ -458,17 +485,25 @@ class WatershedDelineationDialog(QWidget):
         output = prepare_output_path(output_dir / f"{prefix}_04_dem_reacondicionado.tif", self._log)
         points = prepare_output_path(output_dir / f"{prefix}_04_puntos_carve.gpkg", self._log)
         self._log("Reacondicionando DEM con GRASS r.carve...")
-        result = self._run_carve(processing, dem_layer, dem_layer, output, points, feedback)
+        try:
+            result = self._run_carve(processing, dem_layer, dem_layer, output, points, feedback)
+        except Exception as exc:
+            self._log(f"Aviso: GRASS r.carve fallo; se usara el DEM original. Detalle: {exc}")
+            return current_dem
+        if not result or not self._valid_raster_output(result.get("output")):
+            self._log("Aviso: GRASS r.carve no produjo un DEM valido; se usara el DEM original.")
+            return current_dem
         self.last_outputs["conditioned_dem"] = {
             "path": result["output"],
             "name": f"{prefix}_dem_reacondicionado",
             "type": "raster",
         }
-        self.last_outputs["carve_points"] = {
-            "path": result["points"],
-            "name": f"{prefix}_puntos_carve",
-            "type": "vector",
-        }
+        if result.get("points") and Path(str(result["points"])).exists():
+            self.last_outputs["carve_points"] = {
+                "path": result["points"],
+                "name": f"{prefix}_puntos_carve",
+                "type": "vector",
+            }
         return result["output"]
 
     def _stream_layer_to_burn(self):
@@ -527,38 +562,115 @@ class WatershedDelineationDialog(QWidget):
         direction = prepare_output_path(output_dir / f"{prefix}_06_direccion_fill.tif", self._log)
         areas = prepare_output_path(output_dir / f"{prefix}_07_zonas_problema.tif", self._log)
         self._log("Rellenando depresiones con GRASS r.fill.dir...")
-        result = processing.run(
-            self._grass_algorithm_id("r.fill.dir"),
-            {
-                "input": current_dem,
-                "format": 0,
-                "-f": False,
-                "output": output,
-                "direction": direction,
-                "areas": areas,
-                "GRASS_REGION_PARAMETER": self._grass_region(region_layer),
-                "GRASS_REGION_CELLSIZE_PARAMETER": 0,
-                "GRASS_RASTER_FORMAT_OPT": "",
-                "GRASS_RASTER_FORMAT_META": "",
-            },
-            feedback=feedback,
-        )
-        self.last_outputs["analysis_dem"] = result["output"]
+        try:
+            result = processing.run(
+                self._grass_algorithm_id("r.fill.dir"),
+                {
+                    "input": current_dem,
+                    "format": 0,
+                    "-f": False,
+                    "output": output,
+                    "direction": direction,
+                    "areas": areas,
+                    "GRASS_REGION_PARAMETER": self._grass_region(region_layer),
+                    "GRASS_REGION_CELLSIZE_PARAMETER": 0,
+                    "GRASS_RASTER_FORMAT_OPT": "",
+                    "GRASS_RASTER_FORMAT_META": "",
+                },
+                feedback=feedback,
+            )
+        except Exception as exc:
+            self._log(
+                "Aviso: GRASS r.fill.dir no pudo rellenar depresiones. "
+                f"Se intentara el relleno interno Priority-Flood. Detalle: {exc}"
+            )
+            result = {}
+
+        result = result or {}
+        filled_output = result.get("output")
+        if not self._valid_raster_output(filled_output):
+            self._log(
+                "Aviso: GRASS r.fill.dir termino sin crear el DEM rellenado. "
+                "Ejecutando relleno interno Priority-Flood."
+            )
+            try:
+                filled_output = self._priority_flood_dem(current_dem, output)
+            except Exception as exc:
+                self._log(
+                    "Aviso: el relleno interno tampoco pudo completarse; se continuara con el DEM actual. "
+                    f"Detalle: {exc}"
+                )
+                self.last_outputs["analysis_dem"] = current_dem
+                return
+
+        self.last_outputs["analysis_dem"] = filled_output
         self.last_outputs["filled_dem"] = {
-            "path": result["output"],
+            "path": filled_output,
             "name": f"{prefix}_dem_rellenado",
             "type": "raster",
         }
-        self.last_outputs["fill_direction"] = {
-            "path": result["direction"],
-            "name": f"{prefix}_direccion_fill",
-            "type": "raster",
-        }
-        self.last_outputs["problem_areas"] = {
-            "path": result["areas"],
-            "name": f"{prefix}_zonas_problema",
-            "type": "raster",
-        }
+        if self._valid_raster_output(result.get("direction")):
+            self.last_outputs["fill_direction"] = {
+                "path": result["direction"],
+                "name": f"{prefix}_direccion_fill",
+                "type": "raster",
+            }
+        if self._valid_raster_output(result.get("areas")):
+            self.last_outputs["problem_areas"] = {
+                "path": result["areas"],
+                "name": f"{prefix}_zonas_problema",
+                "type": "raster",
+            }
+
+    def _valid_raster_output(self, output):
+        if not output or not Path(str(output)).exists():
+            return False
+        try:
+            layer = QgsRasterLayer(str(output), "hidrogis_validacion")
+            return layer.isValid() and layer.width() > 0 and layer.height() > 0
+        except Exception:
+            return False
+
+    def _priority_flood_dem(self, raster_input, output_path):
+        """Respaldo independiente de GRASS para el error de DEM faltante."""
+        try:
+            import numpy as np
+            from osgeo import gdal
+        except Exception as exc:
+            raise ValueError(f"GDAL/NumPy no disponibles: {exc}")
+        layer = self._raster_layer_from_any(raster_input, "dem_priority_flood")
+        source_path = self._raster_source_path(layer)
+        source = gdal.Open(source_path)
+        if source is None:
+            raise ValueError(f"No se pudo abrir el DEM: {source_path}")
+        band = source.GetRasterBand(1)
+        values = band.ReadAsArray().astype("float64")
+        nodata = band.GetNoDataValue()
+        valid = np.isfinite(values)
+        if nodata is not None:
+            valid &= values != nodata
+        filled = priority_flood_fill(values, valid)
+        driver = gdal.GetDriverByName("GTiff")
+        target = driver.Create(
+            str(output_path), source.RasterXSize, source.RasterYSize, 1, gdal.GDT_Float32,
+            options=["COMPRESS=LZW", "TILED=YES"],
+        )
+        if target is None:
+            raise ValueError(f"No se pudo crear {output_path}")
+        target.SetGeoTransform(source.GetGeoTransform())
+        target.SetProjection(source.GetProjection())
+        target_band = target.GetRasterBand(1)
+        output_nodata = float(nodata) if nodata is not None else -9999.0
+        target_band.SetNoDataValue(output_nodata)
+        target_band.WriteArray(np.where(valid, filled, output_nodata).astype("float32"))
+        target_band.FlushCache()
+        target.FlushCache()
+        target = None
+        source = None
+        if not self._valid_raster_output(output_path):
+            raise ValueError("el GeoTIFF generado no es un raster valido")
+        self._log("DEM rellenado correctamente con Priority-Flood interno.")
+        return str(output_path)
 
     def _reapply_conditioning_after_fill(self, processing, region_layer, output_dir, prefix, feedback):
         if not self.burn_streams_check.isChecked() or not self.fill_sinks_check.isChecked():
@@ -570,18 +682,26 @@ class WatershedDelineationDialog(QWidget):
         output = prepare_output_path(output_dir / f"{prefix}_05_dem_rellenado_reacondicionado.tif", self._log)
         points = prepare_output_path(output_dir / f"{prefix}_05_puntos_carve_final.gpkg", self._log)
         self._log("Reaplicando quemado de red sobre el DEM rellenado...")
-        result = self._run_carve(processing, analysis_dem, region_layer, output, points, feedback)
+        try:
+            result = self._run_carve(processing, analysis_dem, region_layer, output, points, feedback)
+        except Exception as exc:
+            self._log(f"Aviso: no se pudo reaplicar el quemado; se conserva el DEM rellenado. Detalle: {exc}")
+            return
+        if not result or not self._valid_raster_output(result.get("output")):
+            self._log("Aviso: el quemado final no produjo un DEM valido; se conserva el DEM rellenado.")
+            return
         self.last_outputs["analysis_dem"] = result["output"]
         self.last_outputs["analysis_conditioned_dem"] = {
             "path": result["output"],
             "name": f"{prefix}_dem_rellenado_reacondicionado",
             "type": "raster",
         }
-        self.last_outputs["analysis_carve_points"] = {
-            "path": result["points"],
-            "name": f"{prefix}_puntos_carve_final",
-            "type": "vector",
-        }
+        if result.get("points") and Path(str(result["points"])).exists():
+            self.last_outputs["analysis_carve_points"] = {
+                "path": result["points"],
+                "name": f"{prefix}_puntos_carve_final",
+                "type": "vector",
+            }
 
     def _register_hydrologic_dem(self, prefix):
         analysis_dem = self.last_outputs.get("analysis_dem")
@@ -606,6 +726,7 @@ class WatershedDelineationDialog(QWidget):
         stream_raster = prepare_output_path(output_dir / f"{prefix}_14_red_drenaje.tif", self._log)
         stream_vector = prepare_output_path(output_dir / f"{prefix}_15_red_drenaje.gpkg", self._log)
         stream_direction = prepare_output_path(output_dir / f"{prefix}_16_direccion_red.tif", self._log)
+        strahler_raster = prepare_output_path(output_dir / f"{prefix}_22_orden_strahler.tif", self._log)
 
         self._write_d8_raster(model, model["accumulation"].reshape(model["height"], model["width"]), accumulation, "float")
         self._write_d8_raster(model, model["direction"], drainage, "int")
@@ -613,13 +734,15 @@ class WatershedDelineationDialog(QWidget):
 
         channel_mask = self._d8_stream_mask(model, self.stream_cells_spin.value())
         stream_mask = self._d8_stream_mask(model, self.stream_cells_spin.value())
+        stream_order = strahler_order(model["receivers"], stream_mask)
         subbasin_ids = self._d8_subbasin_ids(model, channel_mask)
         self._write_d8_raster(model, subbasin_ids, basins, "int", nodata=0)
         self._write_d8_raster(model, channel_mask.astype("int16"), channel_stream, "int", nodata=0)
         self._write_d8_raster(model, stream_mask.astype("int16"), stream_raster, "int", nodata=0)
+        self._write_d8_raster(model, stream_order.astype("int16"), strahler_raster, "int", nodata=0)
 
         stream_name = self._display_layer_name(prefix, "Red de drenaje")
-        self._save_d8_stream_vector(processing, model, stream_mask, stream_vector, stream_name, feedback)
+        self._save_d8_stream_vector(processing, model, stream_mask, stream_order, stream_vector, stream_name, feedback)
 
         self.last_outputs["accumulation"] = {
             "path": accumulation,
@@ -654,6 +777,11 @@ class WatershedDelineationDialog(QWidget):
         self.last_outputs["stream_direction"] = {
             "path": stream_direction,
             "name": f"{prefix}_direccion_red",
+            "type": "raster",
+        }
+        self.last_outputs["strahler"] = {
+            "path": strahler_raster,
+            "name": f"{prefix}_orden_strahler",
             "type": "raster",
         }
         self._log_vector_feature_count(stream_vector, stream_name)
@@ -912,13 +1040,14 @@ class WatershedDelineationDialog(QWidget):
         dataset.FlushCache()
         dataset = None
 
-    def _save_d8_stream_vector(self, processing, model, stream_mask, output_path, layer_name, feedback):
+    def _save_d8_stream_vector(self, processing, model, stream_mask, stream_order, output_path, layer_name, feedback):
         layer = QgsVectorLayer(f"LineString?crs={model['crs'].authid()}", layer_name, "memory")
         provider = layer.dataProvider()
         provider.addAttributes(
             [
                 QgsField("id", QVariant.Int),
                 QgsField("accum", QVariant.Double),
+                QgsField("strahler", QVariant.Int),
             ]
         )
         layer.updateFields()
@@ -938,7 +1067,7 @@ class WatershedDelineationDialog(QWidget):
                 continue
             feature = QgsFeature(layer.fields())
             feature.setGeometry(QgsGeometry.fromPolylineXY([start, end]))
-            feature.setAttributes([feature_id, float(model["accumulation"][index])])
+            feature.setAttributes([feature_id, float(model["accumulation"][index]), int(stream_order.ravel()[index])])
             provider.addFeature(feature)
             feature_id += 1
 
@@ -1038,6 +1167,10 @@ class WatershedDelineationDialog(QWidget):
             },
             feedback=feedback,
         )
+        required = ("accumulation", "drainage", "basin", "stream")
+        missing = [name for name in required if not self._valid_raster_output((result or {}).get(name))]
+        if missing:
+            raise ValueError(f"GRASS r.watershed no produjo rasteres validos: {', '.join(missing)}")
         self.last_outputs["accumulation"] = {
             "path": result["accumulation"],
             "name": f"{prefix}_acumulacion",

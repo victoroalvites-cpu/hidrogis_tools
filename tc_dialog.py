@@ -1,11 +1,13 @@
 import math
 
 from qgis.PyQt.QtCore import Qt
+from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import (
     QAbstractItemView,
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QStyle,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -20,18 +22,15 @@ class TimeConcentrationDialog(QWidget):
         ("tipo", "Tipo"),
         ("codigo", "Codigo"),
         ("area_km2", "Area km2"),
-        ("long_ax_km", "Long max rec km"),
+        ("long_cp", "Long max cauce km"),
         ("pend_cp", "Pend cauce %"),
         ("kerby_n", "N Kerby"),
         ("tc_kirpich_h", "Kirpich h"),
         ("tc_kerby_h", "Kerby h"),
         ("tc_kerby_kirpich_h", "Kerby-Kirpich h"),
-        ("tc_california_h", "California h"),
         ("tc_chow_h", "Ven Te Chow h"),
         ("tc_temez_h", "Temez h"),
         ("tc_johnstone_h", "Johnstone-Cross h"),
-        ("tc_scs_ranser_h", "SCS-Ranser h"),
-        ("tc_ventura_h", "Ventura-Heras h"),
         ("tc_usace_h", "Ing EE.UU. h"),
         ("tc_tournon_h", "Tournon h"),
         ("tc_passini_h", "Passini h"),
@@ -40,6 +39,8 @@ class TimeConcentrationDialog(QWidget):
         ("tc_rango_h", "Rango Tc h"),
         ("tc_prom_h", "Tc prom h"),
         ("t_retardo_min", "T retardo min"),
+        ("tc_estado", "Estado de metodos"),
+        ("tc_obs", "Observaciones"),
     ]
 
     def __init__(self, morphometry_dialog, open_morphometry_callback=None, parent=None):
@@ -69,8 +70,18 @@ class TimeConcentrationDialog(QWidget):
         self.open_morphometry_button.clicked.connect(self._open_morphometry)
         self.refresh_button = QPushButton("Actualizar desde Morfometria")
         self.refresh_button.clicked.connect(self.refresh_from_morphometry)
+        self.report_button = QPushButton("Ver reporte")
+        report_icon = QIcon.fromTheme("document-open")
+        if report_icon.isNull():
+            report_icon = self.style().standardIcon(QStyle.SP_FileIcon)
+        self.report_button.setIcon(report_icon)
+        self.report_button.setToolTip(
+            "Abre el informe PDF si está disponible; de lo contrario, abre el informe Word."
+        )
+        self.report_button.clicked.connect(self.morphometry_dialog.open_report)
         button_row.addWidget(self.open_morphometry_button)
         button_row.addStretch(1)
+        button_row.addWidget(self.report_button)
         button_row.addWidget(self.refresh_button)
 
         self.status_label = QLabel()

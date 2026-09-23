@@ -133,7 +133,7 @@ def _apply_vector_style(layer, name):
     lowered = name.lower()
 
     if geometry_type == QgsWkbTypes.LineGeometry:
-        if "axial" in lowered or "maximo" in lowered or "recorrido" in lowered:
+        if "maximo" in lowered or "recorrido" in lowered:
             color = "#ff7f00"
             width = "0.75"
         elif "cauce" in lowered or "drenaje" in lowered or "red" in lowered:

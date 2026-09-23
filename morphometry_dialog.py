@@ -5,8 +5,8 @@ import zipfile
 from pathlib import Path
 from xml.sax.saxutils import escape
 
-from qgis.PyQt.QtCore import Qt, QVariant
-from qgis.PyQt.QtGui import QColor, QFont, QImage, QPainter, QPen, QPixmap
+from qgis.PyQt.QtCore import Qt, QUrl, QVariant
+from qgis.PyQt.QtGui import QColor, QDesktopServices, QFont, QIcon, QImage, QPainter, QPen, QPixmap
 from qgis.PyQt.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -17,12 +17,15 @@ from qgis.PyQt.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMenu,
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
+    QStyle,
     QTableWidget,
     QTableWidgetItem,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -39,6 +42,7 @@ from qgis.core import (
     QgsProject,
     QgsRasterLayer,
     QgsRectangle,
+    QgsSpatialIndex,
     QgsUnitTypes,
     QgsVectorLayer,
     QgsWkbTypes,
@@ -46,6 +50,7 @@ from qgis.core import (
 from qgis.gui import QgsMapLayerComboBox
 
 from .output_utils import add_or_replace_layer, prepare_output_path, remove_project_layers_by_name
+from .reporting import write_morphometry_docx, write_morphometry_xlsx, write_workbook
 
 
 class MorphometryDialog(QWidget):
@@ -60,117 +65,142 @@ class MorphometryDialog(QWidget):
 
     RESULT_FIELDS = [
         ("tipo", "Tipo", QVariant.String),
-        ("codigo", "Codigo", QVariant.String),
-        ("area_km2", "Area km2", QVariant.Double),
-        ("area_ha", "Area ha", QVariant.Double),
-        ("perim_km", "Perim km", QVariant.Double),
-        ("long_ax_km", "Long max rec km", QVariant.Double),
-        ("lc_snyder_km", "Lc Snyder km", QVariant.Double),
-        ("ancho_med", "Ancho med km", QVariant.Double),
-        ("ff", "Factor forma", QVariant.Double),
-        ("coef_forma", "Coef forma L2/A", QVariant.Double),
-        ("kc", "Compacidad", QVariant.Double),
-        ("rc", "Circularidad", QVariant.Double),
-        ("re", "Elongacion", QVariant.Double),
-        ("elev_min", "Elev min", QVariant.Double),
-        ("elev_med", "Elev med", QVariant.Double),
-        ("elev_max", "Elev max", QVariant.Double),
-        ("relieve_m", "Relieve m", QVariant.Double),
-        ("int_hipso", "Int hipso", QVariant.Double),
-        ("pend_med", "Pend med %", QVariant.Double),
-        ("rh", "Rel relieve", QVariant.Double),
-        ("coef_masiv", "Coef masividad", QVariant.Double),
-        ("coef_orog", "Coef orografico", QVariant.Double),
-        ("long_red", "Long red km", QVariant.Double),
-        ("long_cp", "Long cauce km", QVariant.Double),
-        ("pend_cp", "Pend cauce %", QVariant.Double),
-        ("dens_dren", "Dens dren", QVariant.Double),
-        ("num_cauces", "Num cauces", QVariant.Int),
-        ("frec_cauces", "Frec cauces", QVariant.Double),
-        ("text_dren", "Text dren", QVariant.Double),
-        ("long_esc_sup", "Long esc sup km", QVariant.Double),
-        ("const_mant", "Const mant km", QVariant.Double),
-        ("num_robust", "Num robustez", QVariant.Double),
-        ("num_infil", "Num infiltracion", QVariant.Double),
-        ("cent_x", "Centroide X", QVariant.Double),
-        ("cent_y", "Centroide Y", QVariant.Double),
+        ("codigo", "Código", QVariant.String),
+        ("area_km2", "Área de la cuenca (km²)", QVariant.Double),
+        ("area_ha", "Área de la cuenca (ha)", QVariant.Double),
+        ("perim_km", "Perímetro de la cuenca (km)", QVariant.Double),
+        ("long_cp", "Longitud máxima del cauce (km)", QVariant.Double),
+        ("lc_snyder_km", "Longitud Lc de Snyder (km)", QVariant.Double),
+        ("ancho_med", "Ancho medio de la cuenca (km)", QVariant.Double),
+        ("ff", "Factor de forma", QVariant.Double),
+        ("coef_forma", "Coeficiente de forma (L²/A)", QVariant.Double),
+        ("kc", "Coeficiente de compacidad de Gravelius", QVariant.Double),
+        ("rc", "Relación de circularidad", QVariant.Double),
+        ("re", "Relación de elongación", QVariant.Double),
+        ("elev_min", "Elevación mínima (m)", QVariant.Double),
+        ("elev_med", "Elevación media (m)", QVariant.Double),
+        ("elev_max", "Elevación máxima (m)", QVariant.Double),
+        ("relieve_m", "Relieve total (m)", QVariant.Double),
+        ("int_hipso", "Integral hipsométrica", QVariant.Double),
+        ("pend_med", "Pendiente media de la cuenca (%)", QVariant.Double),
+        ("rh", "Relación de relieve", QVariant.Double),
+        ("coef_masiv", "Coeficiente de masividad", QVariant.Double),
+        ("coef_orog", "Coeficiente orográfico", QVariant.Double),
+        ("long_red", "Longitud de la red de drenaje (km)", QVariant.Double),
+        ("pend_cp", "Pendiente media del cauce (%)", QVariant.Double),
+        ("dens_dren", "Densidad de drenaje (km/km²)", QVariant.Double),
+        ("num_cauces", "Número de tramos de cauce", QVariant.Int),
+        ("frec_cauces", "Frecuencia de cauces (1/km²)", QVariant.Double),
+        ("text_dren", "Textura de drenaje (1/km)", QVariant.Double),
+        ("long_esc_sup", "Longitud de escurrimiento superficial (km)", QVariant.Double),
+        ("const_mant", "Constante de mantenimiento (km)", QVariant.Double),
+        ("num_robust", "Número de robustez", QVariant.Double),
+        ("num_infil", "Número de infiltración", QVariant.Double),
+        ("strahler_max", "Orden máximo de Strahler", QVariant.Int),
+        ("strahler_tramos", "Tramos con orden de Strahler", QVariant.Int),
+        ("strahler_long_km", "Longitud con orden de Strahler (km)", QVariant.Double),
+        ("strahler_dist", "Distribución por orden de Strahler", QVariant.String),
+        ("cent_x", "Coordenada X del centroide", QVariant.Double),
+        ("cent_y", "Coordenada Y del centroide", QVariant.Double),
     ]
 
     TC_RESULT_FIELDS = [
-        ("kerby_n", "N Kerby", QVariant.Double),
-        ("tc_kirpich_h", "Tc Kirpich h", QVariant.Double),
-        ("tc_kerby_h", "Tc Kerby h", QVariant.Double),
-        ("tc_kerby_kirpich_h", "Tc Kerby-Kirpich h", QVariant.Double),
-        ("tc_california_h", "Tc California h", QVariant.Double),
-        ("tc_chow_h", "Tc Ven Te Chow h", QVariant.Double),
-        ("tc_temez_h", "Tc Temez h", QVariant.Double),
-        ("tc_johnstone_h", "Tc Johnstone-Cross h", QVariant.Double),
-        ("tc_scs_ranser_h", "Tc SCS-Ranser h", QVariant.Double),
-        ("tc_ventura_h", "Tc Ventura-Heras h", QVariant.Double),
-        ("tc_usace_h", "Tc Ing EE.UU. h", QVariant.Double),
-        ("tc_tournon_h", "Tc Tournon h", QVariant.Double),
-        ("tc_passini_h", "Tc Passini h", QVariant.Double),
-        ("tc_validos", "Metodos Tc", QVariant.String),
-        ("tc_n_validos", "N metodos Tc", QVariant.Int),
-        ("tc_rango_h", "Rango Tc h", QVariant.String),
-        ("tc_prom_h", "Tc prom h", QVariant.Double),
-        ("t_retardo_min", "T retardo min", QVariant.Double),
+        ("kerby_n", "Coeficiente de retardo superficial de Kerby (N)", QVariant.Double),
+        ("tc_kirpich_h", "Tiempo de concentración de Kirpich (h)", QVariant.Double),
+        ("tc_kerby_h", "Tiempo de concentración de Kerby (h)", QVariant.Double),
+        ("tc_kerby_kirpich_h", "Tiempo de concentración combinado Kerby-Kirpich (h)", QVariant.Double),
+        ("tc_chow_h", "Tiempo de concentración de Ven Te Chow (h)", QVariant.Double),
+        ("tc_temez_h", "Tiempo de concentración de Témez (h)", QVariant.Double),
+        ("tc_johnstone_h", "Tiempo de concentración de Johnstone-Cross (h)", QVariant.Double),
+        ("tc_usace_h", "Tiempo de concentración del Cuerpo de Ingenieros de EE. UU. (h)", QVariant.Double),
+        ("tc_tournon_h", "Tiempo de concentración de Tournon (h)", QVariant.Double),
+        ("tc_passini_h", "Tiempo de concentración de Passini (h)", QVariant.Double),
+        ("tc_validos", "Métodos de tiempo de concentración incluidos", QVariant.String),
+        ("tc_n_validos", "Número de métodos de tiempo de concentración incluidos", QVariant.Int),
+        ("tc_rango_h", "Rango de tiempos de concentración aceptados (h)", QVariant.String),
+        ("tc_prom_h", "Tiempo de concentración promedio aceptado (h)", QVariant.Double),
+        ("t_retardo_min", "Tiempo de retardo (min)", QVariant.Double),
+        ("tc_estado", "Estado de aplicabilidad de los métodos de tiempo de concentración", QVariant.String),
+        ("tc_obs", "Observaciones sobre los tiempos de concentración", QVariant.String),
     ]
 
     FIELD_NOTES = {
-        "tipo": "Tipo de unidad: cuenca general o subunidad hidrografica.",
+        "tipo": "Tipo de unidad analizada: cuenca general o subunidad hidrográfica.",
         "codigo": "Identificador de la unidad analizada.",
-        "area_km2": "Area planimetrica de la unidad en kilometros cuadrados.",
-        "area_ha": "Area planimetrica de la unidad en hectareas.",
-        "perim_km": "Perimetro de la unidad en kilometros.",
-        "cent_x": "Coordenada X del centroide en el CRS de trabajo.",
-        "cent_y": "Coordenada Y del centroide en el CRS de trabajo.",
-        "elev_min": "Elevacion minima zonal del DEM.",
-        "elev_med": "Elevacion media zonal del DEM.",
-        "elev_max": "Elevacion maxima zonal del DEM.",
-        "relieve_m": "Diferencia entre elevacion maxima y minima.",
-        "int_hipso": "Integral hipsometrica: (Elev_media - Elev_min) / (Elev_max - Elev_min).",
-        "pend_med": "Pendiente media zonal calculada a partir del raster de pendiente en porcentaje.",
-        "long_ax_km": "Longitud de maximo recorrido hidrologico sobre la red de drenaje.",
-        "lc_snyder_km": "Longitud Lc de Snyder: distancia sobre el cauce principal desde la salida hasta el punto del cauce mas cercano al centroide.",
-        "ancho_med": "Ancho medio: Area / longitud de maximo recorrido.",
-        "ff": "Factor de forma: Area / longitud de maximo recorrido^2.",
-        "coef_forma": "Coeficiente de forma de Horton: longitud de maximo recorrido^2 / Area.",
-        "kc": "Coeficiente de compacidad de Gravelius.",
-        "rc": "Relacion de circularidad: 4*pi*Area / Perimetro^2.",
-        "re": "Relacion de elongacion: diametro de circulo equivalente / longitud de maximo recorrido.",
-        "rh": "Relacion de relieve: Relieve / longitud de maximo recorrido.",
-        "coef_masiv": "Coeficiente de masividad: elevacion media / area.",
-        "coef_orog": "Coeficiente orografico: elevacion media^2 / area.",
-        "long_red": "Longitud total de red de drenaje dentro de la unidad.",
-        "long_cp": "Longitud del cauce principal aproximada con la misma ruta de maximo recorrido.",
-        "pend_cp": "Pendiente aproximada del cauce: Relieve / Longitud del cauce principal.",
-        "tc_kirpich_h": "Tiempo de concentracion por Kirpich, en horas. Formula orientada a cuencas pequenas y pendientes pronunciadas.",
-        "kerby_n": "Coeficiente de retardo N usado para los metodos Kerby y Kerby-Kirpich.",
-        "tc_kerby_h": "Tiempo de concentracion por Kerby, en horas. Usa el coeficiente de retardo N seleccionado.",
-        "tc_kerby_kirpich_h": "Tiempo de concentracion combinado Kerby-Kirpich, en horas.",
-        "tc_california_h": "Tiempo de concentracion por California Culverts Practice, en horas.",
-        "tc_chow_h": "Tiempo de concentracion por Ven Te Chow, en horas.",
-        "tc_temez_h": "Tiempo de concentracion por Temez, en horas. Formula practica para cuencas naturales con cauce definido.",
-        "tc_johnstone_h": "Tiempo de concentracion por Johnstone-Cross, en horas. Usa longitud en km y pendiente del cauce en m/km.",
-        "tc_scs_ranser_h": "Tiempo de concentracion por SCS-Ranser, en horas. Usa longitud del cauce y diferencia de cotas.",
-        "tc_ventura_h": "Tiempo de concentracion por Ventura-Heras, en horas. Usa longitud en km y pendiente del cauce en porcentaje.",
-        "tc_usace_h": "Tiempo de concentracion por el Cuerpo de Ingenieros de EE.UU., en horas.",
-        "tc_tournon_h": "Tiempo de concentracion por Tournon, en horas.",
-        "tc_passini_h": "Tiempo de concentracion por Passini, en horas. Formula empirica basada en area, longitud y pendiente.",
-        "tc_validos": "Metodos de tiempo de concentracion incluidos en el promedio.",
-        "tc_n_validos": "Numero de metodos usados para el promedio.",
-        "tc_rango_h": "Rango minimo-maximo de los tiempos de concentracion aceptados, en horas.",
-        "tc_prom_h": "Promedio de los tiempos de concentracion incluidos, en horas.",
+        "area_km2": "Superficie planimétrica delimitada por la divisoria de la unidad hidrográfica.",
+        "area_ha": "Superficie planimétrica expresada en hectáreas.",
+        "perim_km": "Longitud total de la divisoria que delimita la unidad hidrográfica.",
+        "cent_x": "Coordenada X del centroide en el sistema de referencia de coordenadas de trabajo.",
+        "cent_y": "Coordenada Y del centroide en el sistema de referencia de coordenadas de trabajo.",
+        "elev_min": "Elevación mínima del DEM dentro de la unidad hidrográfica.",
+        "elev_med": "Elevación media del DEM dentro de la unidad hidrográfica.",
+        "elev_max": "Elevación máxima del DEM dentro de la unidad hidrográfica.",
+        "relieve_m": "Diferencia entre la elevación máxima y la elevación mínima.",
+        "int_hipso": "Integral hipsométrica: (elevación media - elevación mínima) / (elevación máxima - elevación mínima).",
+        "pend_med": "Pendiente media zonal calculada a partir del ráster de pendiente.",
+        "long_cp": "Recorrido hidrológico validado desde la cabecera hasta el punto de salida, siguiendo el cauce o la dirección de flujo.",
+        "lc_snyder_km": "Distancia medida sobre el cauce principal desde la salida hasta el punto del cauce más cercano al centroide.",
+        "ancho_med": "Ancho medio de la cuenca: área / longitud máxima del cauce.",
+        "ff": "Factor de forma: área / longitud máxima del cauce al cuadrado.",
+        "coef_forma": "Coeficiente de forma de Horton: longitud máxima del cauce al cuadrado / área.",
+        "kc": "Coeficiente de compacidad de Gravelius: perímetro / perímetro del círculo de igual área.",
+        "rc": "Relación de circularidad: 4π × área / perímetro².",
+        "re": "Relación de elongación: diámetro del círculo equivalente / longitud máxima del cauce.",
+        "rh": "Relación de relieve: relieve total / longitud máxima del cauce.",
+        "coef_masiv": "Coeficiente de masividad: elevación media / área.",
+        "coef_orog": "Coeficiente orográfico: elevación media² / área.",
+        "long_red": "Longitud total de la red de drenaje dentro de la unidad hidrográfica.",
+        "pend_cp": "Pendiente media aproximada del cauce: relieve total / longitud máxima del cauce.",
+        "tc_kirpich_h": "Tiempo de concentración por Kirpich. Método orientado a cuencas pequeñas y pendientes pronunciadas.",
+        "kerby_n": "Coeficiente de retardo superficial N utilizado por Kerby y por el método combinado Kerby-Kirpich.",
+        "tc_kerby_h": "Tiempo de concentración por Kerby, calculado con el coeficiente de retardo N seleccionado.",
+        "tc_kerby_kirpich_h": "Tiempo de concentración combinado que suma los componentes de Kerby y Kirpich.",
+        "tc_chow_h": "Tiempo de concentración por Ven Te Chow, calculado con la longitud y la pendiente del cauce.",
+        "tc_temez_h": "Tiempo de concentración por Témez para cuencas naturales con cauce definido.",
+        "tc_johnstone_h": "Tiempo de concentración por Johnstone-Cross, con longitud en kilómetros y pendiente en metros por kilómetro.",
+        "tc_usace_h": "Tiempo de concentración por el método del Cuerpo de Ingenieros de los Estados Unidos.",
+        "tc_tournon_h": "Tiempo de concentración por Tournon, conservado como resultado comparativo.",
+        "tc_passini_h": "Tiempo de concentración por Passini, basado en el área, la longitud y la pendiente.",
+        "tc_validos": "Métodos de tiempo de concentración incluidos en el promedio aceptado.",
+        "tc_n_validos": "Número de métodos utilizados para calcular el promedio aceptado.",
+        "tc_rango_h": "Valores mínimo y máximo de los tiempos de concentración aceptados.",
+        "tc_prom_h": "Promedio de los tiempos de concentración incluidos según sus criterios de aplicabilidad.",
         "t_retardo_min": "Tiempo de retardo calculado como 0.6 * Tc promedio, en minutos.",
-        "dens_dren": "Densidad de drenaje: longitud total de red / area.",
-        "num_cauces": "Numero de tramos de drenaje intersectados por la unidad.",
-        "frec_cauces": "Frecuencia de cauces: numero de tramos / area.",
-        "text_dren": "Textura de drenaje: numero de tramos / perimetro.",
+        "tc_estado": "Aplicabilidad, rango o condición comparativa de cada método de tiempo de concentración.",
+        "tc_obs": "Advertencias y criterios utilizados para interpretar los tiempos de concentración.",
+        "dens_dren": "Densidad de drenaje: longitud total de la red / área.",
+        "num_cauces": "Número de tramos de drenaje intersectados por la unidad.",
+        "frec_cauces": "Frecuencia de cauces: número de tramos / área.",
+        "text_dren": "Textura de drenaje: número de tramos / perímetro.",
         "long_esc_sup": "Longitud de escurrimiento superficial aproximada: 1 / (2 * densidad de drenaje).",
         "const_mant": "Constante de mantenimiento de canales: 1 / densidad de drenaje.",
-        "num_robust": "Numero de robustez: densidad de drenaje * relieve en km.",
-        "num_infil": "Numero de infiltracion: densidad de drenaje * frecuencia de cauces.",
+        "num_robust": "Número de robustez: densidad de drenaje × relieve expresado en kilómetros.",
+        "num_infil": "Número de infiltración: densidad de drenaje × frecuencia de cauces.",
+        "strahler_max": "Orden máximo de Strahler observado en la red de la unidad.",
+        "strahler_tramos": "Número de tramos vectoriales con orden válido; si solo existe un ráster, número de celdas de red.",
+        "strahler_long_km": "Longitud de los tramos vectoriales con orden de Strahler válido. Queda vacía cuando solo se proporciona un ráster.",
+        "strahler_dist": "Distribución de tramos vectoriales o celdas ráster por orden de Strahler.",
+    }
+
+    FIELD_UNITS = {
+        "tipo": "", "codigo": "", "ff": "adimensional", "coef_forma": "adimensional",
+        "kc": "adimensional", "rc": "adimensional", "re": "adimensional",
+        "int_hipso": "adimensional", "rh": "adimensional", "coef_masiv": "m/km²",
+        "coef_orog": "m²/km²", "num_robust": "adimensional", "num_infil": "1/km³",
+        "strahler_max": "orden", "strahler_dist": "", "tc_validos": "",
+        "tc_estado": "", "tc_obs": "",
+        "area_km2": "km²", "area_ha": "ha", "perim_km": "km", "long_cp": "km",
+        "lc_snyder_km": "km", "ancho_med": "km", "elev_min": "m s. n. m.",
+        "elev_med": "m s. n. m.", "elev_max": "m s. n. m.", "relieve_m": "m",
+        "pend_med": "%", "long_red": "km", "pend_cp": "%", "dens_dren": "km/km²",
+        "num_cauces": "tramos", "frec_cauces": "1/km²", "text_dren": "1/km",
+        "long_esc_sup": "km", "const_mant": "km", "strahler_tramos": "tramos",
+        "strahler_long_km": "km", "cent_x": "unidad del CRS", "cent_y": "unidad del CRS",
+        "kerby_n": "adimensional", "tc_kirpich_h": "h", "tc_kerby_h": "h",
+        "tc_kerby_kirpich_h": "h", "tc_chow_h": "h", "tc_temez_h": "h",
+        "tc_johnstone_h": "h", "tc_usace_h": "h", "tc_tournon_h": "h",
+        "tc_passini_h": "h", "tc_n_validos": "métodos", "tc_rango_h": "h",
+        "tc_prom_h": "h", "t_retardo_min": "min",
     }
 
     def __init__(self, iface, parent=None):
@@ -180,6 +210,8 @@ class MorphometryDialog(QWidget):
         self.resize(920, 760)
         self.last_rows = []
         self.last_combined_graph = None
+        self.last_report_docx = None
+        self.last_report_pdf = None
         self._build_ui()
         self.refresh_layers()
 
@@ -232,6 +264,22 @@ class MorphometryDialog(QWidget):
         self.outlet_layer_combo.setFilters(QgsMapLayerProxyModel.PointLayer)
         if hasattr(self.outlet_layer_combo, "setAllowEmptyLayer"):
             self.outlet_layer_combo.setAllowEmptyLayer(True)
+        self.flow_direction_combo = QgsMapLayerComboBox()
+        self.flow_direction_combo.setFilters(QgsMapLayerProxyModel.RasterLayer)
+        self.flow_accumulation_combo = QgsMapLayerComboBox()
+        self.flow_accumulation_combo.setFilters(QgsMapLayerProxyModel.RasterLayer)
+        self.strahler_raster_combo = QgsMapLayerComboBox()
+        self.strahler_raster_combo.setFilters(QgsMapLayerProxyModel.RasterLayer)
+        for combo in (self.flow_direction_combo, self.flow_accumulation_combo, self.strahler_raster_combo):
+            if hasattr(combo, "setAllowEmptyLayer"):
+                combo.setAllowEmptyLayer(True)
+                combo.setLayer(None)
+        self.flow_encoding_combo = QComboBox()
+        self.flow_encoding_combo.addItem("GRASS 1-8 (r.watershed / r.stream.extract)", "grass_1_8")
+        self.flow_encoding_combo.addItem("SAGA 0-7", "saga_0_7")
+        self.flow_encoding_combo.setToolTip(
+            "Selecciona la codificación real del ráster de dirección: GRASS 1-8 o SAGA 0-7."
+        )
         self.dem_note_label = QLabel(
             "Para maximo recorrido y parametros de relieve se recomienda el DEM morfometrico "
             "(recortado/reproyectado). El DEM hidrologico queda disponible para comparacion."
@@ -246,6 +294,10 @@ class MorphometryDialog(QWidget):
         input_layout.addRow("Red de drenaje", self.stream_layer_combo)
         input_layout.addRow("Longest flowpath externo", self.external_flowpath_combo)
         input_layout.addRow("Punto de salida", self.outlet_layer_combo)
+        input_layout.addRow("Direccion de flujo (opcional)", self.flow_direction_combo)
+        input_layout.addRow("Flujo acumulado (opcional)", self.flow_accumulation_combo)
+        input_layout.addRow("Orden Strahler (opcional)", self.strahler_raster_combo)
+        input_layout.addRow("Codificacion de direccion", self.flow_encoding_combo)
 
         output_group = QGroupBox("2. Salidas")
         output_layout = QFormLayout(output_group)
@@ -260,11 +312,11 @@ class MorphometryDialog(QWidget):
         self.add_results_check.setChecked(True)
         self.max_flow_method_combo = QComboBox()
         self.max_flow_method_combo.addItem("D8 interno tipo HEC-HMS (Recomendado)", "d8")
+        self.max_flow_method_combo.addItem("Direccion + acumulacion raster", "flow_raster")
         self.max_flow_method_combo.addItem("Red vectorial (Respaldo)", "network")
         self.max_flow_method_combo.setToolTip(
-            "Define como se traza el maximo recorrido. D8 interno es el metodo recomendado "
-            "ya que traza la ruta topográfica desde la divisoria de aguas. Red vectorial queda como "
-            "respaldo para conectar el cauce principal."
+            "D8 interno funciona solo con el DEM. Direccion + acumulacion sigue un raster D8 ya "
+            "calculado y usa la acumulacion como criterio auxiliar. La red vectorial es el respaldo."
         )
         self.add_subunit_routes_check = QCheckBox("Agregar tambien recorridos por subunidad")
         self.add_subunit_routes_check.setChecked(False)
@@ -295,12 +347,19 @@ class MorphometryDialog(QWidget):
         kerby_row.addWidget(self.kerby_terrain_combo, 1)
         kerby_row.addWidget(QLabel("N personalizado"))
         kerby_row.addWidget(self.kerby_custom_spin)
+        self.include_passini_check = QCheckBox("Incluir Passini en el promedio cuando sea aplicable")
+        self.include_passini_check.setChecked(False)
+        self.include_passini_check.setToolTip(
+            "Passini siempre se reporta como comparacion. Solo se incorpora al promedio si esta opcion "
+            "esta activa y el area se encuentra entre 40 y 70000 km2."
+        )
         output_layout.addRow("Carpeta de salida", output_folder_row)
         output_layout.addRow("Prefijo", self.prefix_edit)
         output_layout.addRow("", self.add_results_check)
         output_layout.addRow("Metodo maximo recorrido", self.max_flow_method_combo)
         output_layout.addRow("", self.add_subunit_routes_check)
         output_layout.addRow("Terreno / N Kerby", kerby_row)
+        output_layout.addRow("", self.include_passini_check)
 
         self.info_label = QLabel()
         self.info_label.setWordWrap(True)
@@ -334,11 +393,29 @@ class MorphometryDialog(QWidget):
 
         button_row = QHBoxLayout()
         button_row.addStretch(1)
+        self.report_button = QToolButton()
+        self.report_button.setText("Ver reporte")
+        self.report_button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        report_icon = QIcon.fromTheme("document-open")
+        if report_icon.isNull():
+            report_icon = QgsApplication.getThemeIcon("/mActionFileOpen.svg")
+        if report_icon.isNull():
+            report_icon = self.style().standardIcon(QStyle.SP_FileIcon)
+        self.report_button.setIcon(report_icon)
+        self.report_button.setToolTip(
+            "Abre el informe PDF si está disponible; de lo contrario, abre el informe Word."
+        )
+        self.report_button.setPopupMode(QToolButton.MenuButtonPopup)
+        report_menu = QMenu(self.report_button)
+        self.open_report_word_action = report_menu.addAction("Abrir informe Word")
+        self.open_report_pdf_action = report_menu.addAction("Abrir informe PDF")
+        self.report_button.setMenu(report_menu)
         self.refresh_button = QPushButton("Refrescar lista de capas")
         self.refresh_button.setToolTip(
             "Vuelve a leer las capas abiertas en QGIS y actualiza los desplegables de entrada."
         )
         self.run_button = QPushButton("Calcular parametros")
+        button_row.addWidget(self.report_button)
         button_row.addWidget(self.refresh_button)
         button_row.addWidget(self.run_button)
 
@@ -354,6 +431,9 @@ class MorphometryDialog(QWidget):
         root.addLayout(button_row)
 
         self.output_folder_button.clicked.connect(self._choose_output_folder)
+        self.report_button.clicked.connect(self.open_report)
+        self.open_report_word_action.triggered.connect(lambda checked=False: self.open_report("docx"))
+        self.open_report_pdf_action.triggered.connect(lambda checked=False: self.open_report("pdf"))
         self.refresh_button.clicked.connect(self.refresh_layers)
         self.run_button.clicked.connect(self.calculate)
         self.kerby_terrain_combo.currentIndexChanged.connect(self._update_kerby_custom_control)
@@ -370,6 +450,9 @@ class MorphometryDialog(QWidget):
         self.stream_layer_combo.setFilters(QgsMapLayerProxyModel.LineLayer)
         self.external_flowpath_combo.setFilters(QgsMapLayerProxyModel.LineLayer)
         self.outlet_layer_combo.setFilters(QgsMapLayerProxyModel.PointLayer)
+        self.flow_direction_combo.setFilters(QgsMapLayerProxyModel.RasterLayer)
+        self.flow_accumulation_combo.setFilters(QgsMapLayerProxyModel.RasterLayer)
+        self.strahler_raster_combo.setFilters(QgsMapLayerProxyModel.RasterLayer)
         self._select_layer_by_name(
             self.dem_layer_combo,
             (
@@ -391,6 +474,9 @@ class MorphometryDialog(QWidget):
             ("longest_flowpath", "longest flowpath", "maximo recorrido", "maximum flow", "flowpath"),
         )
         self._select_layer_by_name(self.outlet_layer_combo, ("punto de salida", "punto salida", "outlet"))
+        self._select_layer_by_name(self.flow_direction_combo, ("direccion_red", "direccion", "flow direction", "fdr"))
+        self._select_layer_by_name(self.flow_accumulation_combo, ("acumulacion", "flow accumulation", "accum"))
+        self._select_layer_by_name(self.strahler_raster_combo, ("orden_strahler", "strahler", "stream order"))
         self._update_morphometry_mode_controls()
 
     def _choose_output_folder(self):
@@ -400,6 +486,43 @@ class MorphometryDialog(QWidget):
 
     def set_output_folder(self, folder):
         self.output_folder_edit.setText(str(folder))
+
+    def _report_candidates(self):
+        output_dir = Path(self.output_folder_edit.text()).expanduser()
+        prefix = self._safe_prefix(self.prefix_edit.text())
+        inferred_docx = output_dir / f"{prefix}_09_informe_parametros.docx"
+        inferred_pdf = inferred_docx.with_suffix(".pdf")
+        docx = Path(self.last_report_docx) if self.last_report_docx else inferred_docx
+        pdf = Path(self.last_report_pdf) if self.last_report_pdf else inferred_pdf
+        if not docx.exists() and inferred_docx.exists():
+            docx = inferred_docx
+        if not pdf.exists() and inferred_pdf.exists():
+            pdf = inferred_pdf
+        return {"docx": docx, "pdf": pdf}
+
+    def open_report(self, preferred=None):
+        candidates = self._report_candidates()
+        if preferred in candidates:
+            order = (preferred,)
+        else:
+            order = ("pdf", "docx")
+        report_path = next((candidates[key] for key in order if candidates[key].is_file()), None)
+        if report_path is None:
+            requested = "PDF" if preferred == "pdf" else "Word" if preferred == "docx" else "Word o PDF"
+            QMessageBox.information(
+                self,
+                "Informe de parámetros",
+                f"No se encontró el informe {requested}. Ejecuta primero Calcular parámetros.",
+            )
+            return False
+        opened = QDesktopServices.openUrl(QUrl.fromLocalFile(str(report_path.resolve())))
+        if not opened:
+            QMessageBox.warning(
+                self,
+                "Informe de parámetros",
+                f"No se pudo abrir el archivo:\n{report_path}",
+            )
+        return bool(opened)
 
     def _update_kerby_custom_control(self):
         is_custom = self.kerby_terrain_combo.currentData() is None
@@ -480,8 +603,19 @@ class MorphometryDialog(QWidget):
                         "En modo HEC-HMS selecciona una capa lineal de longest flowpath externo."
                     )
             outlet_layer = self._optional_point_layer()
+            flow_direction_layer = self.flow_direction_combo.currentLayer()
+            flow_accumulation_layer = self.flow_accumulation_combo.currentLayer()
+            strahler_raster_layer = self.strahler_raster_combo.currentLayer()
+            for layer_name, layer in (
+                ("direccion de flujo", flow_direction_layer),
+                ("flujo acumulado", flow_accumulation_layer),
+                ("orden Strahler", strahler_raster_layer),
+            ):
+                if layer is not None and (not isinstance(layer, QgsRasterLayer) or not layer.isValid()):
+                    raise ValueError(f"La capa de {layer_name} no es un raster valido.")
             max_flow_method = "external" if morphometry_mode == "hms" else (self.max_flow_method_combo.currentData() or "network")
             kerby_n = self._kerby_n_value()
+            include_passini = self.include_passini_check.isChecked()
             if not self._is_projected_crs(dem_layer.crs()):
                 raise ValueError("Usa un DEM en CRS proyectado para calcular parametros morfometricos.")
             if not include_basin and not is_hms_mode:
@@ -503,6 +637,7 @@ class MorphometryDialog(QWidget):
             snyder_basin_output = output_dir / f"{prefix}_07_lc_snyder_cuenca.gpkg"
             snyder_subunits_output = output_dir / f"{prefix}_08_lc_snyder_subunidades.gpkg"
             combined_graph = graph_dir / f"{prefix}_curvas_hipsometrica_todas.png"
+            report_docx = output_dir / f"{prefix}_09_informe_parametros.docx"
 
             basin_units = self._basin_units(basin_layer, dem_layer) if include_basin else []
             subunit_units = self._subunit_units(subunits_layer, dem_layer) if is_hms_mode else []
@@ -534,6 +669,11 @@ class MorphometryDialog(QWidget):
                     kerby_n,
                     allow_nearest_outlet=True,
                     external_flowpath_layer=external_flowpath_layer,
+                    flow_direction_layer=flow_direction_layer,
+                    flow_accumulation_layer=flow_accumulation_layer,
+                    strahler_raster_layer=strahler_raster_layer,
+                    flow_encoding=self.flow_encoding_combo.currentData() or "grass_1_8",
+                    include_passini=include_passini,
                 )
             subunit_rows, subunit_curves = [], []
             if is_hms_mode:
@@ -551,6 +691,11 @@ class MorphometryDialog(QWidget):
                     kerby_n,
                     allow_nearest_outlet=False,
                     external_flowpath_layer=external_flowpath_layer,
+                    flow_direction_layer=flow_direction_layer,
+                    flow_accumulation_layer=flow_accumulation_layer,
+                    strahler_raster_layer=strahler_raster_layer,
+                    flow_encoding=self.flow_encoding_combo.currentData() or "grass_1_8",
+                    include_passini=include_passini,
                 )
 
             self.last_rows = basin_rows + subunit_rows
@@ -558,7 +703,7 @@ class MorphometryDialog(QWidget):
                 processing,
                 basin_rows,
                 "_max_flow_geom",
-                "long_ax_km",
+                "long_cp",
                 max_flow_basin_output,
                 self._display_layer_name(prefix, "Maximo recorrido cuenca"),
                 dem_layer.crs(),
@@ -569,7 +714,7 @@ class MorphometryDialog(QWidget):
                     processing,
                     subunit_rows,
                     "_max_flow_geom",
-                    "long_ax_km",
+                    "long_cp",
                     max_flow_subunits_output,
                     self._display_layer_name(prefix, "Maximo recorrido subunidades"),
                     dem_layer.crs(),
@@ -597,7 +742,24 @@ class MorphometryDialog(QWidget):
                     self.add_results_check.isChecked() and self.add_subunit_routes_check.isChecked(),
                 )
             self._write_csv(csv_output, self.last_rows)
-            self._write_xlsx(xlsx_output, self.last_rows)
+            write_morphometry_xlsx(
+                xlsx_output,
+                self.last_rows,
+                self.RESULT_FIELDS,
+                self.TC_RESULT_FIELDS,
+                self.FIELD_NOTES,
+                self.FIELD_UNITS,
+            )
+            write_morphometry_docx(
+                report_docx,
+                self.last_rows,
+                self.RESULT_FIELDS,
+                self.FIELD_NOTES,
+                self.FIELD_UNITS,
+            )
+            self.last_report_docx = report_docx
+            report_pdf = report_docx.with_suffix(".pdf")
+            self.last_report_pdf = report_pdf if report_pdf.is_file() else None
 
             tc_folder = output_dir.parent / "04_Tiempo_Concentracion"
             tc_folder.mkdir(parents=True, exist_ok=True)
@@ -611,21 +773,39 @@ class MorphometryDialog(QWidget):
                 writer.writeheader()
                 for row in self.last_rows:
                     writer.writerow({k: row.get(k) for k in ["tipo", "codigo"] + tc_fields})
-            tc_headers = ["Tipo", "Codigo"] + [field[1] for field in self.TC_RESULT_FIELDS]
+            tc_headers = ["Tipo", "Código"] + [field[1] for field in self.TC_RESULT_FIELDS]
             tc_keys = ["tipo", "codigo"] + tc_fields
             summary_rows = [tc_headers]
             for row in self.last_rows:
-                summary_rows.append([row.get(key) for key in tc_keys])
+                summary_rows.append(
+                    [
+                        (
+                            row.get(key),
+                            3 if isinstance(row.get(key), (int, float)) else 4,
+                        )
+                        for key in tc_keys
+                    ]
+                )
             
-            dictionary_rows = [["Campo", "Parametro", "Descripcion"]]
+            dictionary_rows = [["Campo", "Parámetro", "Unidad", "Descripción"]]
             for field_name, field_label, _ in self.TC_RESULT_FIELDS:
-                dictionary_rows.append([field_name, field_label, self.FIELD_NOTES.get(field_name, "")])
+                dictionary_rows.append(
+                    [
+                        (field_name, 4),
+                        (field_label, 4),
+                        (self.FIELD_UNITS.get(field_name, "adimensional"), 4),
+                        (self.FIELD_NOTES.get(field_name, ""), 4),
+                    ]
+                )
             
-            self._create_simple_xlsx(
+            tc_widths = {1: 18, 2: 24}
+            for index, field_name in enumerate(tc_fields, 3):
+                tc_widths[index] = 62 if field_name in {"tc_estado", "tc_obs"} else 26
+            write_workbook(
                 tc_xlsx,
                 [
-                    ("Resumen Tc", summary_rows),
-                    ("Diccionario", dictionary_rows),
+                    ("Resumen Tc", summary_rows, {"widths": tc_widths, "freeze": "C2", "autofilter": True}),
+                    ("Diccionario", dictionary_rows, {"widths": {1: 28, 2: 58, 3: 18, 4: 88}, "freeze": "A2", "autofilter": True}),
                 ],
             )
 
@@ -637,6 +817,7 @@ class MorphometryDialog(QWidget):
             self._log(f"Excel: {xlsx_output}")
             self._log(f"CSV: {csv_output}")
             self._log(f"Excel Tiempo de Concentracion: {tc_xlsx}")
+            self._log(f"Informe Word: {report_docx}")
             self._log(f"Graficos hipsometricos: {graph_dir}")
             self._log("Listo.")
             self.iface.messageBar().pushMessage(
@@ -666,6 +847,11 @@ class MorphometryDialog(QWidget):
         kerby_n=0.10,
         allow_nearest_outlet=False,
         external_flowpath_layer=None,
+        flow_direction_layer=None,
+        flow_accumulation_layer=None,
+        strahler_raster_layer=None,
+        flow_encoding="grass_1_8",
+        include_passini=False,
     ):
         if not units:
             raise ValueError(f"No hay unidades validas para {layer_name}.")
@@ -716,6 +902,11 @@ class MorphometryDialog(QWidget):
                 max_flow_method,
                 kerby_n,
                 external_flowpath_layer,
+                flow_direction_layer,
+                flow_accumulation_layer,
+                strahler_raster_layer,
+                flow_encoding,
+                include_passini,
             )
             rows.append(row)
             if curve:
@@ -723,7 +914,7 @@ class MorphometryDialog(QWidget):
 
             out_feature = QgsFeature(final_layer.fields())
             out_feature.setGeometry(geom)
-            out_feature.setAttributes([row[field[0]] for field in self.RESULT_FIELDS])
+            out_feature.setAttributes([row[field[0]] for field in self.RESULT_FIELDS + self.TC_RESULT_FIELDS])
             provider.addFeature(out_feature)
 
         final_layer.updateExtents()
@@ -745,6 +936,11 @@ class MorphometryDialog(QWidget):
         max_flow_method="network",
         kerby_n=0.10,
         external_flowpath_layer=None,
+        flow_direction_layer=None,
+        flow_accumulation_layer=None,
+        strahler_raster_layer=None,
+        flow_encoding="grass_1_8",
+        include_passini=False,
     ):
         area_m2 = geom.area()
         area_km2 = area_m2 / 1000000.0 if area_m2 else None
@@ -769,20 +965,24 @@ class MorphometryDialog(QWidget):
             processing,
             max_flow_method,
             external_flowpath_layer,
+            flow_direction_layer,
+            flow_accumulation_layer,
+            strahler_raster_layer,
+            flow_encoding,
         )
         max_flow_km = drainage["main_km"]
         snyder_km, snyder_geom = self._snyder_centroid_length(
             drainage["main_geom"],
             centroid,
-            outlet_point,
+            drainage["outlet_point"],
         )
-        mean_width = area_km2 / max_flow_km if area_km2 and max_flow_km and max_flow_km > 0 else None
-        form_factor = area_km2 / (max_flow_km * max_flow_km) if area_km2 and max_flow_km and max_flow_km > 0 else None
-        form_coefficient = (max_flow_km * max_flow_km) / area_km2 if area_km2 and max_flow_km and area_km2 > 0 else None
+        mean_width = area_km2 / max_flow_km if area_km2 and max_flow_km else None
+        form_factor = area_km2 / (max_flow_km * max_flow_km) if area_km2 and max_flow_km else None
+        form_coefficient = (max_flow_km * max_flow_km) / area_km2 if max_flow_km and area_km2 else None
         compactness = geom.length() / (2.0 * math.sqrt(math.pi * area_m2)) if area_m2 and geom.length() else None
         circularity = (4.0 * math.pi * area_m2) / (geom.length() ** 2) if area_m2 and geom.length() else None
         elongation = (2.0 * math.sqrt(area_m2 / math.pi)) / (max_flow_km * 1000.0) if area_m2 and max_flow_km else None
-        relief_ratio = relief / (max_flow_km * 1000.0) if relief is not None and max_flow_km and max_flow_km > 0 else None
+        relief_ratio = relief / (max_flow_km * 1000.0) if relief is not None and max_flow_km else None
         massiveness = z_mean / area_km2 if z_mean is not None and area_km2 and area_km2 > 0 else None
         orographic = (z_mean * z_mean) / area_km2 if z_mean is not None and area_km2 and area_km2 > 0 else None
 
@@ -799,6 +999,7 @@ class MorphometryDialog(QWidget):
             z_mean,
             channel_slope_fraction,
             kerby_n,
+            include_passini,
         )
         overland_flow = 1.0 / (2.0 * drainage_density) if drainage_density and drainage_density > 0 else None
         maintenance_constant = 1.0 / drainage_density if drainage_density and drainage_density > 0 else None
@@ -822,7 +1023,6 @@ class MorphometryDialog(QWidget):
             "relieve_m": relief,
             "int_hipso": hypsometric,
             "pend_med": slope_mean,
-            "long_ax_km": max_flow_km,
             "lc_snyder_km": snyder_km,
             "ancho_med": mean_width,
             "ff": form_factor,
@@ -834,18 +1034,15 @@ class MorphometryDialog(QWidget):
             "coef_masiv": massiveness,
             "coef_orog": orographic,
             "long_red": drainage["total_km"],
-            "long_cp": drainage["main_km"],
+            "long_cp": max_flow_km if max_flow_km > 0 else None,
             "pend_cp": channel_slope,
             "kerby_n": tc["kerby_n"],
             "tc_kirpich_h": tc["kirpich_h"],
             "tc_kerby_h": tc["kerby_h"],
             "tc_kerby_kirpich_h": tc["kerby_kirpich_h"],
-            "tc_california_h": tc["california_h"],
             "tc_chow_h": tc["chow_h"],
             "tc_temez_h": tc["temez_h"],
             "tc_johnstone_h": tc["johnstone_h"],
-            "tc_scs_ranser_h": tc["scs_ranser_h"],
-            "tc_ventura_h": tc["ventura_h"],
             "tc_usace_h": tc["usace_h"],
             "tc_tournon_h": tc["tournon_h"],
             "tc_passini_h": tc["passini_h"],
@@ -864,6 +1061,10 @@ class MorphometryDialog(QWidget):
             "const_mant": maintenance_constant,
             "num_robust": ruggedness,
             "num_infil": infiltration_number,
+            "strahler_max": drainage["strahler_max"],
+            "strahler_tramos": drainage["strahler_count"],
+            "strahler_long_km": drainage["strahler_length_km"],
+            "strahler_dist": drainage["strahler_distribution"],
             "graph_path": str(graph_path) if graph_path else "",
             "_max_flow_geom": drainage["main_geom"],
             "_snyder_geom": snyder_geom,
@@ -904,18 +1105,16 @@ class MorphometryDialog(QWidget):
         z_mean,
         slope,
         kerby_n=0.10,
+        include_passini=False,
     ):
         metrics = {
             "kerby_n": None,
             "kirpich_h": None,
             "kerby_h": None,
             "kerby_kirpich_h": None,
-            "california_h": None,
             "chow_h": None,
             "temez_h": None,
             "johnstone_h": None,
-            "scs_ranser_h": None,
-            "ventura_h": None,
             "usace_h": None,
             "tournon_h": None,
             "passini_h": None,
@@ -935,7 +1134,7 @@ class MorphometryDialog(QWidget):
         metrics["kerby_n"] = kerby_retardance
 
         if not area_km2 or area_km2 <= 0 or not length_km or length_km <= 0 or not slope or slope <= 0:
-            metrics["observation"] = "No se pudo estimar Tc: falta area, longitud de cauce o pendiente valida."
+            metrics["observation"] = "No se pudo estimar Tc: falta área, longitud de cauce o pendiente válida."
             return metrics
 
         length_m = length_km * 1000.0
@@ -954,9 +1153,6 @@ class MorphometryDialog(QWidget):
         # Kerby-Kirpich: aproximacion compuesta como suma de escurrimiento superficial y cauce.
         metrics["kerby_kirpich_h"] = metrics["kerby_h"] + metrics["kirpich_h"]
 
-        # California Culverts Practice usa la misma forma metrica de Kirpich.
-        metrics["california_h"] = metrics["kirpich_h"]
-
         # Ven Te Chow: Tc(h)=0.1602*(L/sqrt(S))^0.64. L en km, S adimensional.
         metrics["chow_h"] = 0.1602 * ((length_km / math.sqrt(slope)) ** 0.64)
 
@@ -967,14 +1163,6 @@ class MorphometryDialog(QWidget):
         slope_m_per_km = slope * 1000.0
         metrics["johnstone_h"] = 2.6 * ((length_km / math.sqrt(slope_m_per_km)) ** 0.5)
 
-        # SCS-Ranser: Tc(h)=0.947*(L^3/H)^0.385. L en km, H en m.
-        if relief_m and relief_m > 0:
-            metrics["scs_ranser_h"] = 0.947 * ((length_km ** 3 / relief_m) ** 0.385)
-
-        # Ventura-Heras: Tc(h)=0.30*(L/S^0.25)^0.75. L en km, S en porcentaje.
-        slope_percent = slope * 100.0
-        metrics["ventura_h"] = 0.30 * ((length_km / (slope_percent ** 0.25)) ** 0.75)
-
         # Cuerpo de Ingenieros de EE.UU. (INVIAS): L en km, S adimensional.
         metrics["usace_h"] = 0.28 * ((length_km / (slope ** 0.25)) ** 0.76)
 
@@ -984,7 +1172,9 @@ class MorphometryDialog(QWidget):
         # Passini: Tc(h)=0.108*(A*L)^(1/3)/sqrt(S). A en km2, L en km, S adimensional.
         metrics["passini_h"] = 0.108 * ((area_km2 * length_km) ** (1.0 / 3.0)) / math.sqrt(slope)
 
-        valid_methods, reason, method_status = self._applicable_tc_methods(area_km2, length_km, slope, metrics)
+        valid_methods, reason, method_status = self._applicable_tc_methods(
+            area_km2, length_km, slope, metrics, include_passini
+        )
         tc_values = [metrics[key] for key, _ in valid_methods]
         if tc_values:
             metrics["average_h"] = sum(tc_values) / len(tc_values)
@@ -994,8 +1184,8 @@ class MorphometryDialog(QWidget):
             metrics["range_h"] = f"{min(tc_values):.2f} - {max(tc_values):.2f}"
         metrics["method_status"] = method_status
         metrics["observation"] = self._tc_observation(
-            f"{reason} Filtro aplicado solo por area; pendiente observada S={slope:.4f} m/m "
-            f"(advertencia, no exclusion). Kerby calculado solo para comparacion con N={kerby_retardance:.2f}.",
+            f"{reason} Filtro aplicado solo por área; pendiente observada S={slope:.4f} m/m "
+            f"(advertencia, no exclusión). Kerby calculado solo para comparación con N={kerby_retardance:.2f}.",
             "",
             area_km2,
             length_km,
@@ -1003,7 +1193,7 @@ class MorphometryDialog(QWidget):
         )
         return metrics
 
-    def _applicable_tc_methods(self, area_km2, length_km, slope, metrics):
+    def _applicable_tc_methods(self, area_km2, length_km, slope, metrics, include_passini=False):
         # Filtrado estricto basado en literatura hidrologica para el calculo del promedio.
         # Las ecuaciones fuera de rango o comparativas se conservan en la tabla para analisis.
         criteria = (
@@ -1011,49 +1201,31 @@ class MorphometryDialog(QWidget):
                 "kirpich_h",
                 "Kirpich",
                 lambda: 0.0051 <= area_km2 <= 0.433,
-                "A=0.0051-0.433 km2",
+                "A=0.0051-0.433 km²",
             ),
             (
                 "kerby_kirpich_h",
                 "Kerby-Kirpich",
                 lambda: 0.65 <= area_km2 <= 388.5,
-                "A=0.65-388.5 km2",
+                "A=0.65-388.5 km²",
             ),
             (
                 "temez_h",
-                "Temez",
+                "Témez",
                 lambda: area_km2 < 3000.0,
-                "A<3000 km2",
+                "A<3000 km²",
             ),
             (
                 "johnstone_h",
                 "Johnstone-Cross",
                 lambda: 64.8 <= area_km2 <= 4206.1,
-                "A=64.8-4206.1 km2",
-            ),
-            (
-                "scs_ranser_h",
-                "SCS-Ranser",
-                lambda: 0.01 <= area_km2 <= 65.0,
-                "A=0.01-65.0 km2 (1-6500 ha)",
-            ),
-            (
-                "ventura_h",
-                "Ventura-Heras",
-                lambda: area_km2 <= 2.0,
-                "A<=2.0 km2 (<200 ha)",
+                "A=64.8-4206.1 km²",
             ),
             (
                 "usace_h",
-                "Cuerpo de Ingenieros EE.UU.",
+                "Cuerpo de Ingenieros de EE. UU.",
                 lambda: area_km2 < 12000.0,
-                "A<12000 km2",
-            ),
-            (
-                "passini_h",
-                "Passini",
-                lambda: 40.0 <= area_km2 <= 70000.0,
-                "A=40-70000 km2",
+                "A<12000 km²",
             ),
         )
         accepted = []
@@ -1062,7 +1234,7 @@ class MorphometryDialog(QWidget):
         for key, name, is_applicable, rule in criteria:
             value = metrics.get(key)
             if value is None or value <= 0:
-                rejected.append(f"{name} (sin Tc valido)")
+                rejected.append(f"{name} (sin Tc válido)")
                 status.append(f"{name}: no calculado")
             elif is_applicable():
                 accepted.append((key, name))
@@ -1071,21 +1243,33 @@ class MorphometryDialog(QWidget):
                 rejected.append(f"{name} ({rule})")
                 status.append(f"{name}: fuera de rango ({rule})")
 
-        # Metodos puramente individuales o pendientes de calibracion regional
+        passini_value = metrics.get("passini_h")
+        passini_rule = "A=40-70000 km²"
+        if passini_value is None or passini_value <= 0:
+            status.append("Passini: no calculado")
+        elif not 40.0 <= area_km2 <= 70000.0:
+            rejected.append(f"Passini ({passini_rule})")
+            status.append(f"Passini: fuera de rango ({passini_rule})")
+        elif include_passini:
+            accepted.append(("passini_h", "Passini"))
+            status.append(f"Passini: incluido por el usuario ({passini_rule})")
+        else:
+            status.append(f"Passini: comparativo, no incluido ({passini_rule})")
+
+        # Métodos puramente individuales o pendientes de calibración regional.
         status.extend(
             (
                 "Kerby: comparativo individual de flujo terrestre",
-                "California Culverts: comparativo, duplica Kirpich",
-                "Ven Te Chow: comparativo, variante pendiente de confirmacion",
-                "Tournon: comparativo, formula y unidades pendientes de confirmacion",
+                "Ven Te Chow: comparativo, variante pendiente de confirmación",
+                "Tournon: comparativo, fórmula y unidades pendientes de confirmación",
             )
         )
 
         if accepted:
             accepted_text = ", ".join(name for _, name in accepted)
-            reason = f"Promedio con metodos aplicables: {accepted_text}."
+            reason = f"Promedio con métodos aplicables: {accepted_text}."
         else:
-            reason = "No hay metodos aplicables con criterios de area documentados."
+            reason = "No hay métodos aplicables con criterios de área documentados."
         if rejected:
             reason = f"{reason} Excluidos: {'; '.join(rejected)}."
         return accepted, reason, "; ".join(status)
@@ -1099,7 +1283,7 @@ class MorphometryDialog(QWidget):
         if slope > 0.30:
             warnings.append("pendiente muy alta")
         if area_km2 > 3000:
-            warnings.append("cuenca grande para formulas empiricas simples")
+            warnings.append("cuenca grande para fórmulas empíricas simples")
         notes = [base]
         if filter_note:
             notes.append(filter_note)
@@ -1116,12 +1300,18 @@ class MorphometryDialog(QWidget):
         processing=None,
         max_flow_method="network",
         external_flowpath_layer=None,
+        flow_direction_layer=None,
+        flow_accumulation_layer=None,
+        strahler_raster_layer=None,
+        flow_encoding="grass_1_8",
     ):
         target_crs = dem_layer.crs()
         total_length = 0.0
         fallback_length = 0.0
         fallback_geom = None
         count = 0
+        strahler_counts = {}
+        strahler_length = 0.0
         graph = {}
         node_points = {}
         tolerance = max(
@@ -1165,14 +1355,35 @@ class MorphometryDialog(QWidget):
                 continue
             total_length += feature_length
             count += 1
+            order_index = stream_layer.fields().lookupField("strahler")
+            if order_index < 0:
+                order_index = stream_layer.fields().lookupField("order")
+            if order_index >= 0:
+                try:
+                    order_value = int(round(float(feature[order_index])))
+                except (TypeError, ValueError):
+                    order_value = 0
+                if order_value > 0:
+                    strahler_counts[order_value] = strahler_counts.get(order_value, 0) + 1
+                    strahler_length += feature_length
             if feature_length > fallback_length:
                 fallback_length = feature_length
                 fallback_geom = QgsGeometry(feature_geom) if feature_geom is not None else QgsGeometry(clipped)
 
         inferred_outlet = self._infer_unit_outlet_point(unit_geom, graph, node_points, dem_layer, outlet_point)
+        network_length, network_geom = self._longest_flow_path(graph, node_points, dem_layer, inferred_outlet)
         main_length = 0.0
         main_geom = None
         used_raster_method = False
+        cell_size = max(abs(dem_layer.rasterUnitsPerPixelX()), abs(dem_layer.rasterUnitsPerPixelY())) or 1.0
+        if outlet_point is not None and inferred_outlet is not None and node_points:
+            network_outlet = self._nearest_node(inferred_outlet, node_points)
+            snap_distance = self._point_distance(inferred_outlet, node_points[network_outlet])
+            if snap_distance > cell_size * 5.0:
+                self._log(
+                    f"Aviso: la salida seleccionada esta a {snap_distance:.1f} m del nodo mas cercano de la red. "
+                    "Comprueba que seleccionaste el punto de salida ajustado."
+                )
 
         if external_flowpath_layer is not None:
             external_length, external_geom = self._external_flowpath_for_unit(
@@ -1184,46 +1395,230 @@ class MorphometryDialog(QWidget):
                 tolerance * 8.0,
             )
             if external_geom is not None and not external_geom.isEmpty() and external_length > 0:
-                main_length = external_length
-                main_geom = external_geom
-                self._log(f"Maximo recorrido externo: {main_length / 1000.0:.3f} km")
+                issue = self._flow_path_quality_issue(unit_geom, inferred_outlet, external_geom, network_length, cell_size)
+                if issue is None:
+                    main_length = external_length
+                    main_geom = external_geom
+                    # El recorrido importado ya esta trazado: no cambiar su cabecera.
+                    used_raster_method = True
+                    self._log(f"Maximo recorrido externo: {main_length / 1000.0:.3f} km")
+                else:
+                    self._log(f"Recorrido externo rechazado: {issue}.")
             else:
                 self._log("No se encontro longest flowpath externo dentro de la unidad; se usara respaldo vectorial.")
 
+        if main_geom is None and max_flow_method == "flow_raster" and flow_direction_layer is not None:
+            main_geom = self._longest_flow_path_from_direction(
+                flow_direction_layer,
+                flow_accumulation_layer,
+                dem_layer,
+                unit_geom,
+                inferred_outlet,
+                flow_encoding,
+            )
+            if main_geom is not None and not main_geom.isEmpty():
+                issue = self._flow_path_quality_issue(unit_geom, inferred_outlet, main_geom, network_length, cell_size)
+                if issue is None:
+                    main_length = main_geom.length()
+                    used_raster_method = True
+                    self._log(f"Maximo recorrido por direccion/acumulacion: {main_length / 1000.0:.3f} km")
+                else:
+                    self._log(f"Recorrido por direccion/acumulacion rechazado: {issue}.")
+                    main_geom = None
+            if main_geom is None:
+                self._log("Direccion/acumulacion no produjo un recorrido valido; se usara D8 interno.")
+                main_geom = self._longest_flow_path_d8_internal(dem_layer, unit_geom, inferred_outlet)
+                if main_geom is not None and not main_geom.isEmpty():
+                    issue = self._flow_path_quality_issue(unit_geom, inferred_outlet, main_geom, network_length, cell_size)
+                    if issue is None:
+                        main_length = main_geom.length()
+                        used_raster_method = True
+                    else:
+                        self._log(f"Respaldo D8 rechazado: {issue}.")
+                        main_geom = None
+        elif main_geom is None and max_flow_method == "flow_raster":
+            self._log("No se selecciono direccion de flujo; se usara D8 interno.")
+            main_geom = self._longest_flow_path_d8_internal(dem_layer, unit_geom, inferred_outlet)
+            if main_geom is not None and not main_geom.isEmpty():
+                issue = self._flow_path_quality_issue(unit_geom, inferred_outlet, main_geom, network_length, cell_size)
+                if issue is None:
+                    main_length = main_geom.length()
+                    used_raster_method = True
+                else:
+                    self._log(f"Respaldo D8 rechazado: {issue}.")
+                    main_geom = None
         if main_geom is None and max_flow_method == "d8":
             main_geom = self._longest_flow_path_d8_internal(dem_layer, unit_geom, inferred_outlet)
             if main_geom is not None and not main_geom.isEmpty():
-                main_length = main_geom.length()
-                used_raster_method = True
-                self._log(f"Maximo recorrido por D8 interno: {main_length / 1000.0:.3f} km")
-                network_length, network_geom = self._longest_flow_path(graph, node_points, dem_layer, inferred_outlet)
-                if (
-                    network_geom is not None
-                    and not network_geom.isEmpty()
-                    and network_length > 0
-                    and self._d8_path_looks_too_short(unit_geom, inferred_outlet, main_length, network_length)
-                ):
-                    self._log(
-                        "D8 interno genero una ruta corta para la unidad; "
-                        "se usara la red vectorial como respaldo para evitar un recorrido truncado."
-                    )
-                    main_length = network_length
-                    main_geom = network_geom
-                    used_raster_method = False
+                issue = self._flow_path_quality_issue(unit_geom, inferred_outlet, main_geom, network_length, cell_size)
+                if issue is None:
+                    main_length = main_geom.length()
+                    used_raster_method = True
+                    self._log(f"Maximo recorrido por D8 interno: {main_length / 1000.0:.3f} km")
+                else:
+                    self._log(f"D8 interno rechazado: {issue}; se revisara la red vectorial.")
+                    main_geom = None
         if main_geom is None:
-            main_length, main_geom = self._longest_flow_path(graph, node_points, dem_layer, inferred_outlet)
+            hybrid_geom = self._longest_flow_path_hybrid(
+                dem_layer, unit_geom, inferred_outlet, network_geom, max_samples=250000
+            )
+            if hybrid_geom is not None and not hybrid_geom.isEmpty():
+                issue = self._flow_path_quality_issue(unit_geom, inferred_outlet, hybrid_geom, network_length, cell_size)
+                if issue is None:
+                    main_geom = hybrid_geom
+                    main_length = hybrid_geom.length()
+                    used_raster_method = True
+                    self._log(f"Maximo recorrido hibrido D8+red: {main_length / 1000.0:.3f} km")
+                else:
+                    self._log(f"Recorrido hibrido rechazado: {issue}.")
+        if main_geom is None and network_geom is not None:
+            issue = self._flow_path_quality_issue(unit_geom, inferred_outlet, network_geom, 0.0, cell_size)
+            if issue is None:
+                main_length, main_geom = network_length, network_geom
+            else:
+                self._log(f"Red vectorial rechazada como recorrido maximo: {issue}.")
         if main_geom is None:
             main_length = fallback_length
             main_geom = fallback_geom
         if main_geom is not None and not main_geom.isEmpty() and not used_raster_method:
-            main_geom = self._extend_path_to_boundary(unit_geom, main_geom, dem_layer)
+            # No inventar un tramo desde el punto mas alto de toda la divisoria
+            # hasta una red que podria pertenecer a otra rama de drenaje.
             main_length = main_geom.length()
+        if main_geom is not None:
+            issue = self._flow_path_quality_issue(unit_geom, inferred_outlet, main_geom, 0.0, cell_size)
+            if issue is not None:
+                self._log(
+                    f"No se publicara longitud de cauce ni Tc derivados: {issue}. "
+                    "Revisa la salida ajustada, la red y el DEM, o usa un longest flowpath externo."
+                )
+                main_length, main_geom = 0.0, None
+        if strahler_raster_layer is not None and not strahler_counts:
+            raster_metrics = self._strahler_raster_metrics(strahler_raster_layer, unit_geom, target_crs)
+            if raster_metrics["counts"]:
+                strahler_counts = raster_metrics["counts"]
+                strahler_length = None
+        distribution = ", ".join(f"O{order}={strahler_counts[order]}" for order in sorted(strahler_counts))
         return {
             "total_km": total_length / 1000.0,
             "main_km": main_length / 1000.0,
             "count": count,
             "main_geom": main_geom,
+            "outlet_point": inferred_outlet,
+            "strahler_max": max(strahler_counts) if strahler_counts else None,
+            "strahler_count": sum(strahler_counts.values()),
+            "strahler_length_km": strahler_length / 1000.0 if strahler_length is not None else None,
+            "strahler_distribution": distribution,
         }
+
+    def _strahler_raster_metrics(self, raster_layer, unit_geom, target_crs):
+        grid = self._raster_cells_in_geometry(raster_layer, unit_geom, target_crs, max_samples=700000)
+        if not grid:
+            return {"counts": {}}
+        native_x = abs(raster_layer.rasterUnitsPerPixelX()) or 1.0
+        native_y = abs(raster_layer.rasterUnitsPerPixelY()) or 1.0
+        if grid["pixel_x"] > native_x * 1.02 or grid["pixel_y"] > native_y * 1.02:
+            self._log("Raster Strahler omitido: la unidad supera 700000 celdas y el remuestreo alteraria el conteo.")
+            return {"counts": {}}
+        counts = {}
+        for value in grid["values"].values():
+            order = int(round(value))
+            if order > 0:
+                counts[order] = counts.get(order, 0) + 1
+        return {"counts": counts}
+
+    def _longest_flow_path_from_direction(
+        self,
+        direction_layer,
+        accumulation_layer,
+        dem_layer,
+        unit_geom,
+        outlet_point,
+        encoding,
+    ):
+        grid = self._raster_cells_in_geometry(direction_layer, unit_geom, dem_layer.crs(), max_samples=700000)
+        if not grid or len(grid["values"]) < 2:
+            return None
+        native_x = abs(direction_layer.rasterUnitsPerPixelX()) or 1.0
+        native_y = abs(direction_layer.rasterUnitsPerPixelY()) or 1.0
+        if grid["pixel_x"] > native_x * 1.02 or grid["pixel_y"] > native_y * 1.02:
+            self._log(
+                "El raster de direccion supera 700000 celdas en la unidad; "
+                "no se remuestrearan codigos D8 porque se perderia la conectividad."
+            )
+            return None
+        directions = {}
+        offsets = self._flow_direction_offsets(encoding)
+        for index, value in grid["values"].items():
+            code = int(round(value))
+            if code in offsets:
+                directions[index] = code
+        if len(directions) < 2:
+            return None
+        points = grid["points"]
+        receivers = {}
+        indegree = {index: 0 for index in directions}
+        for (row, col), code in directions.items():
+            dr, dc = offsets[code]
+            receiver = (row + dr, col + dc)
+            if receiver in directions:
+                receivers[(row, col)] = receiver
+                indegree[receiver] += 1
+        if outlet_point is not None:
+            ranked = sorted(directions, key=lambda index: self._point_distance(points[index], outlet_point))
+            tolerance = max(grid["pixel_x"], grid["pixel_y"]) * 5.0
+            terminals = {index for index in ranked[:25] if self._point_distance(points[index], outlet_point) <= tolerance}
+            terminals = terminals or {ranked[0]}
+        else:
+            boundary = self._d8_boundary_indices(directions)
+            terminals = {
+                min(
+                    boundary or list(directions),
+                    key=lambda index: (
+                        elevation if (elevation := self._sample_dem_point(dem_layer, points[index])) is not None
+                        else float("inf")
+                    ),
+                )
+            }
+        distance_cache = {index: 0.0 for index in terminals}
+        sources = [index for index, degree in indegree.items() if degree == 0] or list(directions)
+        best = None
+        for index in sources:
+            distance = self._d8_distance_to_terminal(index, receivers, points, terminals, distance_cache)
+            if distance is None or distance <= 0:
+                continue
+            elevation = self._sample_dem_point(dem_layer, points[index])
+            accumulation = self._sample_raster_point(accumulation_layer, points[index], dem_layer.crs())
+            score = (distance, elevation if elevation is not None else -float("inf"), -(accumulation or 0.0))
+            if best is None or score > best[0]:
+                best = (score, index)
+        if best is None:
+            return None
+        line_points = self._d8_path_points(best[1], receivers, points, terminals)
+        if len(line_points) < 2:
+            return None
+        if outlet_point is not None and self._point_distance(line_points[-1], outlet_point) <= max(grid["pixel_x"], grid["pixel_y"]) * 8.0:
+            line_points.append(QgsPointXY(outlet_point))
+        line = self._longest_line_from_geometry(QgsGeometry.fromPolylineXY(line_points).intersection(unit_geom))
+        return self._extend_path_to_boundary(unit_geom, line) if line is not None else None
+
+    def _sample_raster_point(self, raster_layer, point, point_crs):
+        if raster_layer is None:
+            return None
+        sample_point = QgsPointXY(point)
+        if raster_layer.crs() != point_crs:
+            sample_point = QgsCoordinateTransform(point_crs, raster_layer.crs(), QgsProject.instance()).transform(sample_point)
+        try:
+            value, ok = raster_layer.dataProvider().sample(sample_point, 1)
+            return float(value) if ok and value is not None and math.isfinite(float(value)) else None
+        except Exception:
+            return None
+
+    def _flow_direction_offsets(self, encoding):
+        if encoding == "grass_1_8":
+            return {1: (-1, 1), 2: (-1, 0), 3: (-1, -1), 4: (0, -1), 5: (1, -1), 6: (1, 0), 7: (1, 1), 8: (0, 1)}
+        if encoding == "saga_0_7":
+            return {0: (-1, 0), 1: (-1, 1), 2: (0, 1), 3: (1, 1), 4: (1, 0), 5: (1, -1), 6: (0, -1), 7: (-1, -1)}
+        return {1: (-1, 1), 2: (-1, 0), 3: (-1, -1), 4: (0, -1), 5: (1, -1), 6: (1, 0), 7: (1, 1), 8: (0, 1)}
 
     def _external_flowpath_for_unit(
         self,
@@ -1370,19 +1765,9 @@ class MorphometryDialog(QWidget):
 
     def _infer_unit_outlet_point(self, unit_geom, graph, node_points, dem_layer, explicit_outlet_point=None):
         if explicit_outlet_point is not None:
-            local_outlet = self._point_on_unit_for_outlet(unit_geom, explicit_outlet_point)
-            if graph and node_points:
-                tolerance = max(
-                    0.01,
-                    max(abs(dem_layer.rasterUnitsPerPixelX()), abs(dem_layer.rasterUnitsPerPixelY())) * 1.5,
-                )
-                candidate_nodes = self._graph_boundary_nodes(unit_geom, node_points, tolerance)
-                if not candidate_nodes:
-                    candidate_nodes = set(node_points.keys())
-                outlet_node = self._nearest_node(local_outlet, node_points, candidate_nodes)
-                if outlet_node in node_points:
-                    return QgsPointXY(node_points[outlet_node])
-            return local_outlet
+            # El punto suministrado manda. La red se aproxima a este punto
+            # al buscar su ruta, pero no desplaza la salida de la cuenca.
+            return self._point_on_unit_for_outlet(unit_geom, explicit_outlet_point)
         if graph and node_points:
             tolerance = max(
                 0.01,
@@ -1398,14 +1783,10 @@ class MorphometryDialog(QWidget):
 
     def _graph_boundary_nodes(self, unit_geom, node_points, tolerance):
         nodes = set()
-        try:
-            boundary = unit_geom.boundary()
-            for node, point in node_points.items():
-                point_geom = QgsGeometry.fromPointXY(point)
-                if boundary.distance(point_geom) <= tolerance:
-                    nodes.add(node)
-        except Exception:
-            return set()
+        for node, point in node_points.items():
+            boundary_point = self._nearest_boundary_point(unit_geom, point)
+            if boundary_point is not None and self._point_distance(point, boundary_point) <= tolerance:
+                nodes.add(node)
         return nodes
 
     def _point_on_unit_for_outlet(self, unit_geom, outlet_point):
@@ -1415,12 +1796,9 @@ class MorphometryDialog(QWidget):
                 return QgsPointXY(outlet_point)
         except Exception:
             pass
-        try:
-            boundary_point = unit_geom.boundary().nearestPoint(outlet_geom)
-            if boundary_point is not None and not boundary_point.isEmpty():
-                return QgsPointXY(boundary_point.asPoint())
-        except Exception:
-            pass
+        boundary_point = self._nearest_boundary_point(unit_geom, outlet_point)
+        if boundary_point is not None:
+            return boundary_point
         try:
             nearest = unit_geom.nearestPoint(outlet_geom)
             if nearest is not None and not nearest.isEmpty():
@@ -1430,15 +1808,7 @@ class MorphometryDialog(QWidget):
         return QgsPointXY(outlet_point)
 
     def _lowest_boundary_point(self, geom, dem_layer):
-        try:
-            points = [QgsPointXY(vertex) for vertex in geom.boundary().vertices()]
-        except Exception:
-            points = []
-        if not points:
-            try:
-                points = [QgsPointXY(vertex) for vertex in geom.vertices()]
-            except Exception:
-                points = []
+        points = self._boundary_vertices(geom)
         if not points:
             return None
         max_points = 8000
@@ -1553,6 +1923,33 @@ class MorphometryDialog(QWidget):
         suspicious_by_geometry = straight_distance > 0 and path_length < straight_distance * 0.55
         suspicious_by_network = network_length and network_length > 0 and path_length < network_length * 0.65
         return suspicious_by_geometry or suspicious_by_network
+
+    def _flow_path_quality_issue(self, unit_geom, outlet_point, path_geom, network_length, cell_size):
+        if path_geom is None or path_geom.isEmpty() or path_geom.length() <= 0:
+            return "recorrido vacio"
+        if self._d8_path_looks_too_short(unit_geom, outlet_point, path_geom.length(), network_length):
+            return "recorrido demasiado corto respecto a la cuenca o la red"
+        if outlet_point is not None:
+            parts = self._line_parts(path_geom)
+            if not parts:
+                return "geometria de recorrido no lineal"
+            points = max(parts, key=self._polyline_length)
+            endpoints = [QgsPointXY(points[0]), QgsPointXY(points[-1])]
+            outlet_index = 0 if self._point_distance(endpoints[0], outlet_point) <= self._point_distance(endpoints[1], outlet_point) else 1
+            outlet_endpoint = endpoints[outlet_index]
+            headwater_endpoint = endpoints[1 - outlet_index]
+            nearest = self._point_distance(outlet_endpoint, outlet_point)
+            if nearest > max(cell_size * 5.0, 1.0):
+                return f"ningun extremo llega a la salida (distancia {nearest:.1f} m)"
+            boundary_point = self._nearest_boundary_point(unit_geom, headwater_endpoint)
+            boundary_distance = (
+                self._point_distance(headwater_endpoint, boundary_point)
+                if boundary_point is not None
+                else float("inf")
+            )
+            if boundary_distance > max(cell_size * 5.0, 1.0):
+                return f"la cabecera no llega a la divisoria (distancia {boundary_distance:.1f} m)"
+        return None
 
     def _d8_outlet_index(self, values, points, outlet_point):
         if not values:
@@ -1737,15 +2134,7 @@ class MorphometryDialog(QWidget):
         }
 
     def _farthest_boundary_point(self, geom, reference_point):
-        try:
-            points = [QgsPointXY(vertex) for vertex in geom.boundary().vertices()]
-        except Exception:
-            points = []
-        if not points:
-            try:
-                points = [QgsPointXY(vertex) for vertex in geom.vertices()]
-            except Exception:
-                points = []
+        points = self._boundary_vertices(geom)
         if not points:
             return None
         max_points = 6000
@@ -1753,6 +2142,21 @@ class MorphometryDialog(QWidget):
             step = max(1, math.ceil(len(points) / max_points))
             points = points[::step]
         return max(points, key=lambda point: math.hypot(point.x() - reference_point.x(), point.y() - reference_point.y()))
+
+    def _boundary_vertices(self, geom):
+        try:
+            return [QgsPointXY(vertex) for vertex in geom.vertices()]
+        except Exception:
+            return []
+
+    def _nearest_boundary_point(self, geom, point):
+        try:
+            result = geom.closestSegmentWithContext(QgsPointXY(point))
+            if result and len(result) >= 2 and result[0] >= 0:
+                return QgsPointXY(result[1])
+        except Exception:
+            pass
+        return None
 
     def _longest_line_from_geometry(self, geom):
         if geom is None or geom.isEmpty():
@@ -1837,6 +2241,131 @@ class MorphometryDialog(QWidget):
                 best_path = self._path_geometry(farthest, outlet, parents, node_points)
         return best_length, best_path
 
+    def _longest_flow_path_hybrid(
+        self, dem_layer, unit_geom, outlet_point, network_geom, max_samples=250000
+    ):
+        """Extend a connected channel path to the divide using a DEM-guided route."""
+        if network_geom is None or network_geom.isEmpty() or outlet_point is None:
+            return None
+        parts = self._line_parts(network_geom)
+        if not parts:
+            return None
+        network_points = [QgsPointXY(point) for point in max(parts, key=self._polyline_length)]
+        if len(network_points) < 2:
+            return None
+        if self._point_distance(network_points[0], outlet_point) < self._point_distance(network_points[-1], outlet_point):
+            network_points.reverse()
+
+        grid = self._raster_cells_in_geometry(
+            dem_layer, unit_geom, dem_layer.crs(), max_samples=max_samples
+        )
+        if not grid or len(grid["values"]) < 2:
+            return None
+        values = grid["values"]
+        points = grid["points"]
+        boundary = self._d8_boundary_indices(values)
+        if not boundary:
+            return None
+        candidates = sorted(
+            boundary,
+            key=lambda index: (
+                self._point_distance(points[index], outlet_point),
+                values[index],
+            ),
+            reverse=True,
+        )[:160]
+
+        spatial = QgsSpatialIndex()
+        for index, point in enumerate(network_points):
+            feature = QgsFeature()
+            feature.setId(index)
+            feature.setGeometry(QgsGeometry.fromPointXY(point))
+            spatial.addFeature(feature)
+        nearest_cache = {}
+
+        def nearest_network(index):
+            cached = nearest_cache.get(index)
+            if cached is not None:
+                return cached
+            ids = spatial.nearestNeighbor(points[index], 1)
+            if not ids:
+                result = (float("inf"), None)
+            else:
+                vertex_index = int(ids[0])
+                result = (self._point_distance(points[index], network_points[vertex_index]), vertex_index)
+            nearest_cache[index] = result
+            return result
+
+        snap_tolerance = max(grid["pixel_x"], grid["pixel_y"]) * 3.0
+        best_points = None
+        best_length = 0.0
+        for start in candidates:
+            route, network_index = self._hybrid_route_to_network(
+                start, values, points, nearest_network, snap_tolerance
+            )
+            if not route or network_index is None:
+                continue
+            route_points = [QgsPointXY(points[index]) for index in route]
+            downstream = [QgsPointXY(point) for point in network_points[network_index:]]
+            if downstream and self._point_distance(route_points[-1], downstream[0]) <= snap_tolerance:
+                combined = route_points + downstream
+            else:
+                continue
+            length = self._polyline_length(combined)
+            if length > best_length:
+                best_length = length
+                best_points = combined
+        if not best_points:
+            return None
+        return QgsGeometry.fromPolylineXY(best_points)
+
+    def _hybrid_route_to_network(self, start, values, points, nearest_network, snap_tolerance):
+        route = [start]
+        visited = {start}
+        current = start
+        max_steps = min(len(values), 12000)
+        for _ in range(max_steps):
+            current_distance, network_index = nearest_network(current)
+            if current_distance <= snap_tolerance:
+                return route, network_index
+            row, col = current
+            neighbors = []
+            for row_delta in (-1, 0, 1):
+                for col_delta in (-1, 0, 1):
+                    if row_delta == 0 and col_delta == 0:
+                        continue
+                    neighbor = (row + row_delta, col + col_delta)
+                    if neighbor in values and neighbor not in visited:
+                        neighbors.append(neighbor)
+            if not neighbors:
+                return None, None
+
+            scored = []
+            for neighbor in neighbors:
+                move = self._point_distance(points[current], points[neighbor])
+                if move <= 0:
+                    continue
+                neighbor_distance, _ = nearest_network(neighbor)
+                drop = values[current] - values[neighbor]
+                network_gain = current_distance - neighbor_distance
+                if drop > 0 and network_gain > 0:
+                    group = 5
+                elif drop > 0:
+                    group = 4
+                elif network_gain > 0 and drop >= -2.0:
+                    group = 3
+                elif network_gain > 0:
+                    group = 2
+                else:
+                    group = 1
+                scored.append((group, network_gain, drop / move, -neighbor_distance, neighbor))
+            if not scored:
+                return None, None
+            current = max(scored)[4]
+            route.append(current)
+            visited.add(current)
+        return None, None
+
     def _nearest_node(self, point, node_points, allowed_nodes=None):
         nodes = allowed_nodes if allowed_nodes is not None else node_points.keys()
         return min(
@@ -1862,15 +2391,13 @@ class MorphometryDialog(QWidget):
                 return path_geom
             
             if dem_layer is None:
-                boundary = unit_geom.boundary()
-                boundary_point_geom = boundary.nearestPoint(QgsGeometry.fromPointXY(QgsPointXY(points[0])))
-                if boundary_point_geom is None or boundary_point_geom.isEmpty():
+                boundary_point = self._nearest_boundary_point(unit_geom, QgsPointXY(points[0]))
+                if boundary_point is None:
                     return path_geom
-                return QgsGeometry.fromPolylineXY([QgsPointXY(boundary_point_geom.asPoint())] + [QgsPointXY(p) for p in points])
+                return QgsGeometry.fromPolylineXY([boundary_point] + [QgsPointXY(p) for p in points])
 
             # 1. Encontrar el punto MAS ALTO en el borde de la cuenca
-            boundary = unit_geom.boundary()
-            vertices = [QgsPointXY(v) for v in boundary.vertices()]
+            vertices = self._boundary_vertices(unit_geom)
             
             best_boundary_pt = None
             max_z = -99999
@@ -2084,6 +2611,8 @@ class MorphometryDialog(QWidget):
     def _save_line_results(self, processing, rows, geometry_key, length_key, output_path, layer_name, crs, add_to_project=True):
         line_rows = [row for row in rows if row.get(geometry_key) is not None and not row[geometry_key].isEmpty()]
         if not line_rows:
+            remove_project_layers_by_name(layer_name)
+            self._log(f"{layer_name}: no hay un recorrido validado para mostrar.")
             return
         layer = QgsVectorLayer(f"LineString?crs={crs.authid()}", layer_name, "memory")
         provider = layer.dataProvider()
@@ -2279,7 +2808,9 @@ class MorphometryDialog(QWidget):
     def _final_layer_template(self, crs, name):
         layer = QgsVectorLayer(f"MultiPolygon?crs={crs.authid()}", name, "memory")
         provider = layer.dataProvider()
-        provider.addAttributes([QgsField(field_name, field_type) for field_name, _, field_type in self.RESULT_FIELDS])
+        provider.addAttributes(
+            [QgsField(field_name, field_type) for field_name, _, field_type in self.RESULT_FIELDS + self.TC_RESULT_FIELDS]
+        )
         layer.updateFields()
         return layer
 

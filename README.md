@@ -113,15 +113,15 @@ Los archivos principales del modulo de cuencas son:
 - `_21_red_drenaje_cuenca.gpkg`
 - `_21_red_drenaje_cuenca.shp`
 
-## Flujo sugerido para morfometria
+## Flujo sugerido para morfometría
 
 1. Genera o carga el DEM preprocesado.
 2. Genera o carga la cuenca general.
-3. Abre la pestana `Morfometria`.
-4. Usa el modo `Cuenca unica (QGIS/GRASS)` para calcular solo la cuenca delimitada.
-5. Selecciona DEM, cuenca general y red de drenaje. Para morfometria se recomienda usar el DEM morfometrico original, normalmente el DEM recortado o reproyectado. El `DEM hidrologico` queda disponible para comparacion, pero no se prioriza automaticamente porque el quemado de cauces puede sesgar el maximo recorrido hacia la red reacondicionada.
-6. Si tienes la capa `Punto de salida`, dejala seleccionada para que el maximo recorrido de la cuenca se oriente hacia la salida aguas abajo.
-7. Elige el metodo para el maximo recorrido: `D8 interno tipo HEC-HMS`, `Red vectorial`, `GRASS r.drain` o `SAGA Next Gen`.
+3. Abre la pestaña `Morfometría`.
+4. Usa el modo `Cuenca única (QGIS/GRASS)` para calcular solo la cuenca delimitada.
+5. Selecciona DEM, cuenca general y red de drenaje. Para morfometría se recomienda usar el DEM morfométrico original, normalmente el DEM recortado o reproyectado. El `DEM hidrológico` queda disponible para comparación, pero no se prioriza automáticamente porque el quemado de cauces puede sesgar el máximo recorrido hacia la red reacondicionada.
+6. Selecciona el punto de salida que coincide con el drenaje y la celda de acumulación; si existe `Punto de salida ajustado`, úsalo en lugar del punto original sin ajustar.
+7. Elige el método para el máximo recorrido. Si ya generaste los rásteres de dirección y acumulación, usa `Dirección + acumulación ráster`; de lo contrario, puedes usar `D8 interno` o `Red vectorial`.
 8. Define carpeta de salida y prefijo.
 9. Ejecuta `Calcular parametros`.
 
@@ -129,17 +129,18 @@ Si necesitas revisar subunidades generadas por HEC-HMS u otra fuente externa, ca
 
 El modulo calcula parametros para la cuenca unica. En modo HEC-HMS/importado tambien puede procesar subunidades externas:
 
-- Area, perimetro y centroide.
-- Elevacion minima, media y maxima.
-- Relieve, pendiente media e integral hipsometrica.
-- Longitud de maximo recorrido sobre la red hasta el borde de la unidad, ancho medio, factor de forma y coeficiente de forma.
-- Lc Snyder: longitud sobre el cauce principal desde la salida hasta el punto del cauce mas cercano al centroide.
-- Coeficiente de compacidad, circularidad, elongacion y relacion de relieve.
-- Coeficiente de masividad y coeficiente orografico.
+- Área, perímetro y centroide.
+- Elevación mínima, media y máxima.
+- Relieve, pendiente media e integral hipsométrica.
+- Longitud máxima sobre el cauce o recorrido hidrológico conectado a la salida, usada para el ancho medio, los índices de forma, Snyder, la pendiente del cauce y los tiempos de concentración.
+- Lc Snyder: longitud sobre el cauce principal desde la salida hasta el punto del cauce más cercano al centroide.
+- Coeficiente de compacidad, circularidad, elongación y relación de relieve.
+- Coeficiente de masividad y coeficiente orográfico.
 - Longitud total de red de drenaje y cauce principal aproximado por maximo recorrido.
 - Pendiente aproximada del cauce principal.
-- Tiempos de concentracion por Kirpich, Kerby, Kerby-Kirpich, California, Ven Te Chow,
-  Temez, Johnstone-Cross, SCS-Ranser, Ventura-Heras, Cuerpo de Ingenieros de EE.UU.,
+- Orden máximo, número y longitud de elementos, y distribución de la red de Strahler.
+- Tiempos de concentracion por Kirpich, Kerby, Kerby-Kirpich, Ven Te Chow,
+  Témez, Johnstone-Cross, Cuerpo de Ingenieros de EE. UU.,
   Tournon y Passini.
 - Matriz de aplicabilidad por area, promedio de Tc, rango y tiempo de retardo.
 - Densidad de drenaje, frecuencia de cauces y textura de drenaje.
@@ -159,11 +160,24 @@ Las salidas principales son:
 - `_06_maximo_recorrido_subunidades.gpkg` (modo HEC-HMS/importado)
 - `_07_lc_snyder_cuenca.gpkg`
 - `_08_lc_snyder_subunidades.gpkg` (modo HEC-HMS/importado)
+- `_09_informe_parametros.docx`
 - `_curvas_hipsometrica/`
 
-El archivo Excel incluye una hoja `Resumen` y una hoja `Diccionario` con la descripcion de cada campo. Las curvas hipsometricas se guardan como archivos PNG individuales por unidad y un PNG combinado, y tambien se pueden revisar dentro del panel `Integral hipsometrica` de la herramienta. Para el maximo recorrido, HidroGIS incluye un metodo D8 interno que calcula celdas conectadas a la salida, acumula distancia hidraulica hacia esa salida y traza la ruta desde la celda mas lejana, buscando asemejarse al criterio de longest flowpath de HEC-HMS. Tambien conserva los metodos `Red vectorial`, `GRASS r.drain` y SAGA Next Gen `Maximum Flow Path Length` como alternativas de comparacion.
+El archivo Excel incluye las hojas `Parámetros` (matriz por subcuenca), `Datos` (formato normalizado), `Tiempos` y `Diccionario`. Las tablas emplean los nombres completos, unidades y descripciones reales de cada parámetro. El informe Word presenta metodología, cuadro resumen, parámetros por unidad, tiempos de concentración, métodos incluidos y observaciones. Las curvas hipsométricas se guardan como archivos PNG individuales por unidad y un PNG combinado. Para el máximo recorrido, HidroGIS puede seguir directamente el ráster de dirección y usa el flujo acumulado como criterio auxiliar al escoger la cabecera conectada a la salida. Una ruta corta o que no llega a la salida se rechaza; se prueban D8 interno y un respaldo híbrido que prolonga la red hasta la divisoria siguiendo el DEM. Si tampoco se valida un recorrido, la longitud de cauce, Snyder y los tiempos de concentración dependientes quedan sin resultado.
 
-Por defecto se carga al proyecto solo el maximo recorrido de la cuenca general y su Lc Snyder. Los recorridos y Lc por subunidad solo se guardan o cargan en el modo `Subunidades HEC-HMS/importadas`, para evitar que visualmente se confundan con toda la red de drenaje.
+El botón `Ver reporte`, disponible en Morfometría y Tiempo de concentración, abre el PDF asociado cuando existe; en caso contrario abre el informe Word. El menú desplegable permite seleccionar explícitamente cualquiera de los dos formatos. Los valores numéricos del informe usan punto como separador decimal.
+
+Al usar el ráster de dirección, selecciona su codificación: GRASS 1-8 (predeterminada) o SAGA 0-7. No se remuestrean los códigos de dirección para calcular el recorrido, pues eso cambiaría la conectividad. Los parámetros Strahler usan los tramos vectoriales cuando existe el campo `strahler`; si solo se entrega el ráster de orden, el conteo representa celdas y no se informa longitud vectorial.
+
+El motor D8 genera `_22_orden_strahler.tif` y agrega el campo `strahler` a la red vectorial. Si `GRASS r.fill.dir` falla o no crea un raster valido, HidroGIS intenta automaticamente un relleno interno `Priority-Flood`; de ese modo la delimitacion no vuelve a solicitar un `_05_dem_rellenado.tif` inexistente.
+
+Si GRASS tampoco completa `r.watershed` o la extraccion de red, HidroGIS comprueba las salidas y prueba el motor D8 interno. Este ultimo acepta como maximo 4 millones de celdas; para un DEM mas grande se debe recortar el area de analisis o resolver el proveedor GRASS. El registro indica claramente el motor usado.
+
+### Estudios que cruzan las zonas UTM 18S y 19S
+
+El complemento usa el CRS del **DEM**, no el CRS mostrado en la esquina inferior de QGIS para el proyecto. Prepara un DEM unico en un CRS proyectado en metros y transforma las capas vectoriales a ese mismo marco de trabajo. EPSG:32718 y EPSG:32719 son alternativas posibles segun la ubicacion de la cuenca; cambiar solo el CRS del proyecto no reproyecta el raster. Verifica el CRS en las propiedades de la capa y revisa la distorsion si el area de estudio es muy extensa a ambos lados del limite de zona.
+
+Por defecto se cargan al proyecto el máximo recorrido validado y su Lc Snyder para la cuenca general. Las líneas por subunidad se guardan y solo se cargan si se activa esa opción en el modo `Subunidades HEC-HMS/importadas`.
 
 Los tiempos de concentracion dependen directamente de la longitud de maximo recorrido y la pendiente del cauce. HidroGIS calcula un amplio abanico de formulas empiricas, pero evalua rigurosamente el area de la cuenca bajo estudio para promediar unicamente los metodos aplicables segun sus criterios de validez espaciales:
 
@@ -171,15 +185,17 @@ Los tiempos de concentracion dependen directamente de la longitud de maximo reco
 - `Kerby-Kirpich`: rango de aplicacion para cuencas medianas de 0.65 a 388.5 km2.
 - `Temez`: cuencas menores a 3000 km2.
 - `Johnstone-Cross`: rango de aplicacion de 64.8 a 4206.1 km2.
-- `SCS-Ranser`: rango de aplicacion de 0.01 a 65.0 km2 (1 a 6500 ha).
-- `Ventura-Heras`: cuencas pequenas menores o iguales a 2.0 km2 (<= 200 ha).
 - `Cuerpo de Ingenieros de EE.UU.`: cuencas menores a 12000 km2.
-- `Passini`: rango de aplicacion de 40 a 70000 km2.
+- `Passini`: rango de aplicacion de 40 a 70000 km2; se muestra siempre como comparativo y solo entra al promedio cuando el usuario activa la opcion correspondiente.
 
-Metodos puramente individuales de escurrimiento superficial (`Kerby`), duplicados (`California Culverts`) o pendientes de verificacion regional (`Ven Te Chow`, `Tournon`) se conservan en la tabla general como comparativos. El resumen principal muestra `Rango Tc h`, `Tc prom h` (promedio estrictamente filtrado) y `T retardo min`.
+`California Culverts` y `Ventura-Heras` se retiraron del calculo y de todos los reportes. Los metodos puramente individuales (`Kerby`) o pendientes de verificacion regional (`Ven Te Chow`, `Tournon`) se conservan como comparativos. El resumen principal muestra `Rango Tc h`, `Tc prom h` y `T retardo min`.
 
 Ademas del reporte general de morfometria, el complemento genera automaticamente un reporte exclusivo (`_tiempos_concentracion.xlsx` y `.csv`) dentro de la subcarpeta `04_Tiempo_Concentracion`, incluyendo una hoja de resumen y un diccionario detallado de variables.
 
 `T retardo = 0.6 * Tc promedio * 60`
 
 Estos resultados deben revisarse con criterio hidrologico y con la calidad del DEM/red de drenaje.
+
+### Compatibilidad futura
+
+La lectura directa de insumos preparados en ArcGIS Pro, SWAT+ y otros entornos queda planificada para versiones posteriores. La versión actual no interpreta esas codificaciones de manera automática; deben emplearse los insumos y codificaciones expresamente disponibles en la interfaz.
